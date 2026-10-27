@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors><certificates src="system" /></trust-anchors>
+    </base-config>
+    <!-- Fresh user-installed qualification CA; exact loopback hosts only. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">alpha.127.0.0.1.nip.io</domain>
+        <domain includeSubdomains="false">beta.127.0.0.1.nip.io</domain>
+        <domain includeSubdomains="false">issuer-alpha.127.0.0.1.nip.io</domain>
+        <domain includeSubdomains="false">issuer-beta.127.0.0.1.nip.io</domain>
+        <trust-anchors><certificates src="system" /><certificates src="user" /></trust-anchors>
+    </domain-config>
+</network-security-config>

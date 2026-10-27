@@ -1,0 +1,7 @@
+Ito
+Copyright (C) 2026 FixCraft Inc.
+
+Ito's original application and JNI adapter code is licensed under the GNU
+Affero General Public License, version 3 or any later version, as stated in
+the application README and LICENSE. Third-party components retain their
+respective copyrights, license terms and notices.
