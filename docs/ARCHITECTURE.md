@@ -81,12 +81,14 @@ The first [calling security contract](CALL_SECURITY.md) assigns local identity,
 contact trust, confidential one-use invitations and channel-bound peer proofs
 to Ito. Its [component decision](SECURITY_COMPONENT.md) selects a maintained
 native TLS record channel. The [relay contract](CALL_RELAY.md) specifies the
-separate authorized service ingress and opaque forwarding. These are intended
-interfaces with a bounded host component evaluation, not implemented app calls.
+separate authorized service ingress and opaque forwarding. The app's endpoint
+is not implemented, so these interfaces carry no app calls yet.
 
-A minimal call service joins two outbound client connections and forwards
-opaque encrypted media. It is separate application code, not an ability
-obtained merely by connecting two users to an ordinary yumed. YUME protects
+The call service joins two outbound client connections and forwards opaque
+bytes, which the endpoint will fill with encrypted media. It is separate
+application code in [relay/](../relay/README.md), a YUME module behind
+yumed's grant check, not an ability obtained merely by connecting two users to
+an ordinary yumed. It links no YUME library and holds no endpoint secret. YUME protects
 each client-to-service connection. Independent end-to-end encryption keeps
 audio private from that service. The operator still sees connection metadata
 and may deny service. The local contact key must be verified independently

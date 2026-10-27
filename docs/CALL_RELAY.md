@@ -1,9 +1,11 @@
 # Opaque two-party relay, version 1
 
-This is the service contract for later implementation. No calling service is
-implemented or deployed by this contract. It joins two authorized outbound
-streams and forwards the [end-to-end channel](CALL_SECURITY.md). It owns no
-contact directory, app signing keys, invitation PSKs, media keys or codecs.
+This is the service contract. [relay/](../relay/README.md) implements it as
+`ito-call-relay`, a YUME module that operators run beside yumed. The service
+joins two authorized outbound streams and forwards the
+[end-to-end channel](CALL_SECURITY.md). It owns no contact directory, app
+signing keys, invitation PSKs, media keys or codecs. Running it makes no call
+by itself: the app endpoint is a separate, later implementation.
 
 ## Transport authorization and ingress
 
@@ -20,6 +22,11 @@ connect. The service may run under a distinct dynamic UID. Pin its trusted
 daemon UID in local service configuration and require SO_PEERCRED to match
 that UID or root, never the module's own UID by assumption. Check the listener's
 type, ownership and private directory, including when testing without systemd.
+The service refuses to run as root. Its configuration is the service name and
+the numeric daemon UID, given as command-line options in the unit. A
+malformed header, another service name, an untrusted peer or a connection
+beyond the service's 1024 streams, which yumed's own module limit already
+prevents, closes without a reply, because no client request has been read.
 YUME's module contract owns header grammar. For this service, bound the header
 to 14 prefix bytes, 64 lowercase fingerprint hex digits, one space, 1..64
 service bytes and a newline (144 bytes maximum). Check the canonical YUME
@@ -70,12 +77,20 @@ the same refusal reason and timing class. A canceled, paired or disconnected
 room can never be rejoined, recovered or migrated. Restart drops all rooms
 and invalidates every token. No durable room store is required.
 
+After RESERVED the reserving stream may wait until the reservation expires
+before its JOIN or CANCEL. The module header and a stream's first request
+share the five-second parsing budget, and so does any partly received frame.
+
 PAIRING publishes only after both admitted streams have their WAITING reply.
 The service writes and flushes PAIRED to each stream before forwarding any raw
 bytes to that stream. Each client waits for its own PAIRED before starting TLS.
 The service must preserve bytes arriving immediately after a parsed JOIN for
 later forwarding, within the queue bound. It cannot parse one read as one
-frame or discard bytes following a control message.
+frame or discard bytes following a control message. Control parsing continues
+on a stream until PAIRED is published, so CANCEL remains a control frame while
+WAITING. When the JOIN that completes a room is parsed, every byte either
+stream sent after its last parsed frame becomes the first opaque bytes of
+that direction.
 
 After PAIRED, all further bytes in either direction are opaque TLS bytes.
 There is no relay control frame, multiplexing, renegotiation or interpretation
@@ -86,7 +101,11 @@ select a new room. Do not attempt to detect END in ciphertext.
 REFUSED reasons are 1 invalid/unavailable room, 2 unsupported protocol,
 3 quota/capacity, 4 canceled, 5 timeout, 6 invalid request. Authentication
 refusal happens at yumed before this protocol. Close after one bounded refusal
-write, with no attacker text. Refusal reveals no peer key, account name or
+write, with no attacker text. Before pairing, a CANCEL, a disconnect or a
+refusal of one stream ends its room: every other stream of the room, and the
+canceling stream itself, receive reason 4. An expired reservation refuses its
+streams with reason 5, and a failed random source refuses RESERVE with
+reason 3. Refusal reveals no peer key, account name or
 online directory information. Different connection timings still reveal room
 activity to its operator.
 
@@ -116,11 +135,20 @@ may be lower.
 
 Apply TCP backpressure when queue credit is exhausted. While a queue has
 pending output, five seconds without write progress closes both streams.
-Disarm that timer when the queue drains. Empty queues during consent or
+Disarm that timer when the queue drains. At the deadline the service tries the
+write once more, because the kernel may not yet have reported space that a
+slowly draining reader freed. Only a write that still cannot progress closes
+the room. Empty queues during consent or
 quiet calls are not stalled writes. A paired room expires after 30 minutes or
 65 MiB forwarded per direction (TLS/control overhead included), whichever is
 first. EOF, native authority loss, timeout, CANCEL before pairing or any
-service failure closes both halves. Do not half-close indefinitely. Release
+service failure closes both halves. Do not half-close indefinitely. An end of
+stream, the 30-minute lifetime and the byte cap first flush bytes already
+accepted, within one second, then close both streams. Errors and stalls close
+them at once. When a write fails because its peer closed, nothing more is
+written to that stream, but what it sent before closing is still forwarded
+for at most the stall timeout. A UNIX peer that closes with unread bytes
+reports a reset after its last byte, which also ends the room in order. Release
 all room state within one second of cancellation plus the transport close
 budget, capped at five seconds total. A service crash ends calls. Recovery
 requires explicit new invitations, not automatic reassignment.
@@ -136,8 +164,9 @@ the independent endpoint channel, without claiming traffic-analysis resistance.
 
 ## Implementation acceptance
 
-The later synthetic harness must use two real outbound authorized native
-streams through yumed, plus a real ungranted client. Exercise reservation,
+The synthetic harness must use two real outbound authorized native
+streams through yumed, plus a real ungranted client. The service's tests and
+harness live in `relay/tests`. Exercise reservation,
 wrong/replayed tokens, occupied roles, expired/canceled rooms, partial and
 coalesced framing, unknown/oversized requests, quotas, slow readers, queue
 exhaustion, reconnects within the rate window, restart, hangup, authority loss

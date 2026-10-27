@@ -41,9 +41,11 @@ Ito’s account, selection and connection adapters.
 
 [Calling security](docs/CALL_SECURITY.md) specifies the planned local identity,
 contact verification and authenticated channel. The [relay contract](docs/CALL_RELAY.md)
-defines the separate opaque forwarding service. The [component decision](docs/SECURITY_COMPONENT.md)
-records the maintained native selection and its host-only evaluation. These
-contracts do not add calling or media to the application.
+defines the separate opaque forwarding service, which [relay/](relay/README.md)
+implements as a YUME module for operators. The [component decision](docs/SECURITY_COMPONENT.md)
+records the maintained native selection and its host-only evaluation. The
+application has no call endpoint yet, so none of this adds calling or media
+to the app.
 
 ## Build and validation
 

@@ -51,6 +51,13 @@ AndroidX may package `libandroidx.graphics.path.so` under Apache-2.0, covered
 by its runtime artifact notice. BaseFWX is not part of Ito's native transport
 or app-data storage.
 
+## Call relay service
+
+The operator-side [relay](relay/README.md) is Ito's own AGPL-3.0-or-later
+code and links only the C++ standard library of the compiler that builds it.
+It is not part of the APK. Its yumed harness loads the operator's libyume and
+YUME programs at test time and redistributes none of them.
+
 ## Android application libraries
 
 The separate host-only [security component evaluation](docs/SECURITY_COMPONENT.md)
