@@ -26,7 +26,7 @@ if (providersEnabled) {
     val providerRoot = providers.gradleProperty("itoProviderRoot").orNull
         ?: error("Enabled providers require -PitoProviderRoot")
     val providerDirectory = file(providerRoot)
-    require(providerDirectory.resolve("VERSION").readText().trim() == "0.3.0") { "Unsupported provider library version" }
+    require(providerDirectory.resolve("VERSION").readText().trim() == "0.4.0") { "Unsupported provider library version" }
     include(":provider-library")
     project(":provider-library").projectDir = providerDirectory
 }

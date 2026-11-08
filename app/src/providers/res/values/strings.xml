@@ -35,8 +35,8 @@
     <string name="provider_choose_server">Choose a server</string>
     <string name="provider_refresh_servers">Refresh servers</string>
     <string name="provider_access_until">Access until %1$s.</string>
-    <string name="provider_access_renew">Access ends at %1$s. Choose this server again to renew it.</string>
-    <string name="provider_access_ended">Access ended. Choose this server again to renew it.</string>
+    <string name="provider_access_renew">Access until %1$s. Ito renews it automatically.</string>
+    <string name="provider_access_ended">Access ended. It renews when you connect.</string>
     <string name="provider_location_unknown">Location not given</string>
     <string name="provider_server_address">Connects to %1$s:%2$d. This is the server address, not proof of where traffic leaves.</string>
     <string name="provider_issuer_detail">Sign-in: %1$s</string>

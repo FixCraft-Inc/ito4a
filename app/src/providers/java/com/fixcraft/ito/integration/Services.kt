@@ -54,6 +54,12 @@ fun transportServices(owner: ServiceController<ItoProviderSession>): ConnectionS
     override fun selectedForRestart(): SelectedService? = authority {
         owner.selectedForRestart()?.let(::ProviderSelection)
     }
+    override fun renewAfter(selection: SelectedService): Long? = authority {
+        owner.renewAfter((selection as? ProviderSelection)?.selected ?: throw ServiceRefusal("binding"))
+    }
+    override suspend fun renew(selection: SelectedService): SelectedService = authority {
+        ProviderSelection(owner.renew((selection as? ProviderSelection)?.selected ?: throw ServiceRefusal("binding")))
+    }
     override suspend fun open(selection: SelectedService): OpenedService = authority {
         val selected = (selection as? ProviderSelection)?.selected ?: throw ServiceRefusal("binding")
         val opened = owner.open(selected)

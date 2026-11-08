@@ -7,6 +7,10 @@ interface ConnectionServices {
     fun selectManual()
     fun selectedForRestart(): SelectedService?
     suspend fun open(selection: SelectedService): OpenedService
+    /** UTC seconds after which [selection]'s lease renews without a person, or null if it never does. */
+    fun renewAfter(selection: SelectedService): Long?
+    /** Renews [selection]'s lease on its server. Its old connection ends, so the caller reconnects with the result. */
+    suspend fun renew(selection: SelectedService): SelectedService
 }
 
 interface SelectedService {

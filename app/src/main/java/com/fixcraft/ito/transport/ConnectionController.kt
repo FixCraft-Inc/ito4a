@@ -120,6 +120,8 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     }
     private class RunCleanupFailure(val failure: ConnectionFailure, val nativeCode: Int = 0)
     private class RunNetworkLost : Exception()
+    /** The lease reached its renewal time while no call was in progress. */
+    private class RenewalDue : Exception()
     private class NetworkMonitorUnavailable : Exception()
     private data class Probe(val packet: Boolean, val service: String, val host: String, val port: Int)
 
@@ -259,12 +261,27 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         } finally { code.fill(0) }
     }
 
-    fun connect() = command {
+    fun connect() = command { startRun() }
+
+    /** Reconnects on a renewed lease, unless a later Connect or Stop replaced [previous]. */
+    private fun reconnectRenewed(previous: Run) = command {
+        if (current === previous) startRun()
+    }
+
+    private suspend fun startRun() {
         stopRun()
-        val provider = withContext(Dispatchers.IO) { services?.selectedForRestart() }
+        val stored = withContext(Dispatchers.IO) { services?.selectedForRestart() }
+        // A lease past its renewal time renews first, so coming back after an hour just connects.
+        val provider = stored?.let { selection ->
+            val due = withContext(Dispatchers.IO) { requireNotNull(services).renewAfter(selection) }
+            if (due == null || System.currentTimeMillis() / 1000 < due) selection else {
+                mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Starting, failure = ConnectionFailure.None)
+                withContext(Dispatchers.IO) { requireNotNull(services).renew(selection) }
+            }
+        }
         val selected = if (provider == null) withContext(Dispatchers.IO) { store.list().selectedId }
             ?: throw IllegalArgumentException() else null
-        val (network, route) = chosenNetwork() ?: run { fail(ConnectionFailure.NetworkUnavailable); return@command }
+        val (network, route) = chosenNetwork() ?: run { fail(ConnectionFailure.NetworkUnavailable); return }
         val run = Run(++generation, network, route, provider?.provider)
         current = run
         mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Starting, failure = ConnectionFailure.None,
@@ -407,6 +424,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                     if (permit?.valid() == false) throw ServiceRefusal("revoked")
                 }
                 checkAuthority()
+                val renewAt = provider?.let { requireNotNull(services).renewAfter(it) }
                 val description = ManualConfiguration.describe(config)
                 requireCapturedNetwork(run)
                 val address = resolve(run.network, description.dialAddress ?: description.host)
@@ -446,6 +464,8 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                 while (!run.stopped.get()) {
                     requireCapturedNetwork(run)
                     checkAuthority()
+                    // A call holds this loop in serveLane, so renewal waits for it to end.
+                    if (renewAt != null && System.currentTimeMillis() / 1000 >= renewAt) throw RenewalDue()
                     currentCoroutineContext().ensureActive()
                     val status = ItoNative.status(run.handle)
                     if (status.session != ItoNative.ACTIVE || status.sessions != 1L) {
@@ -489,6 +509,9 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                         } finally { response.bytes.fill(0); response.peerFingerprint.fill(0) }
                     } finally { payload.fill(0) }
                 }
+        } catch (_: RenewalDue) {
+            // The provider ends the old grant before issuing the next, so reconnect.
+            reconnectRenewed(run)
         } catch (_: RunNetworkLost) {
             // The network stop owner publishes after joining all native borrowers.
         } catch (_: NetworkMonitorUnavailable) {

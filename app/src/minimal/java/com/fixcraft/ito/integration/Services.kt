@@ -21,6 +21,8 @@ class MinimalServices(private val retainedState: () -> Boolean, private val requ
         return null
     }
     override suspend fun open(selection: SelectedService): OpenedService = throw ServiceRefusal("providers_disabled")
+    override fun renewAfter(selection: SelectedService): Long? = null
+    override suspend fun renew(selection: SelectedService): SelectedService = throw ServiceRefusal("providers_disabled")
 }
 
 fun createServices(context: Context, requireAccess: () -> Unit = {},

@@ -27,7 +27,7 @@ def regular_bytes(path: Path) -> bytes:
 
 def provider_source(artifact: Path, coordinate: str, binding: dict) -> dict:
     if (set(binding) != {"version", "source_sha256"} or
-            binding["version"] != "0.3.0" or
+            binding["version"] != "0.4.0" or
             not re.fullmatch(r"[0-9a-f]{64}", binding["source_sha256"]) or
             coordinate != f"com.fixcraft.yume:provider-library:{binding['version']}"):
         raise ValueError("Shared provider source binding is incomplete")
