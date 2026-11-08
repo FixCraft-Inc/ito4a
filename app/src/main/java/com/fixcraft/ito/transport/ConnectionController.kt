@@ -1,9 +1,5 @@
 package com.fixcraft.ito.transport
 
-import com.fixcraft.ito.provider.ItoProviderSession
-import com.fixcraft.yume.consumer.ServiceController
-import com.fixcraft.yume.consumer.ServiceSelection
-import com.fixcraft.yume.provider.ProviderCodec
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.DnsResolver
@@ -26,6 +22,7 @@ import com.fixcraft.ito.transport.store.StoreException
 import com.fixcraft.ito.transport.store.StoreFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +42,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.selects.select
 import java.io.IOException
 import java.io.FileInputStream
 import java.net.InetAddress
@@ -58,6 +57,19 @@ import kotlin.coroutines.resumeWithException
 enum class ConnectionPhase { Loading, Idle, Starting, Connected, Stopping, Failed }
 enum class ConnectionFailure { None, Storage, InvalidConfiguration, Native, NetworkUnavailable, NetworkLost, Resolve, Cancelled, DataMismatch, Input, Provider }
 data class NetworkChoice(val handle: Long, val wifi: Boolean, val metered: Boolean)
+
+/**
+ * One call attempt's use of the connected run: a named-service stream on its
+ * endpoint, lent for the duration of [use]. The run serializes it with other
+ * data operations. [use] receives the stream handle, the stream's verified
+ * server fingerprint and a check that the run's transport authority still
+ * holds. Stopping the run ends the stream and so the attempt.
+ */
+class CallLane(val service: String, val use: (stream: Long, fingerprint: ByteArray, authorityValid: () -> Boolean) -> Unit) {
+    internal val done = CompletableDeferred<Unit>()
+}
+
+class CallLaneUnavailable : Exception("no connected run")
 data class DataReceipt(val kind: String, val bytes: Int, val sha256: String, val peer: String, val generation: Long, val network: Long,
     val nativeBytesSent: Long, val nativeBytesReceived: Long)
 data class ConnectionState(
@@ -76,7 +88,8 @@ data class ConnectionState(
 )
 
 /** One process owns the store and every native handle. Activity recreation retains no secret. */
-class ConnectionController(context: Context, private val services: ServiceController<ItoProviderSession>? = null) {
+class ConnectionController(context: Context, private val services: ConnectionServices? = null,
+    private val requireAccess: () -> Unit = {}) {
     private val app = context.applicationContext
     private val connectivity = app.getSystemService(ConnectivityManager::class.java)
     private val store = ConfigurationStore(app)
@@ -91,17 +104,23 @@ class ConnectionController(context: Context, private val services: ServiceContro
     private var importer: Job? = null
     private var importSignal: CancellationSignal? = null
 
-    private class Run(val generation: Long, val network: Network, val provider: String?) {
+    private class Run(val generation: Long, val network: Network, val route: CapturedConnectionNetwork, val provider: String?) {
         val monitor = Any()
         val stopped = AtomicBoolean(false)
+        val networkLost = AtomicBoolean(false)
         val boundSockets = AtomicInteger()
         val probes = Channel<Probe>(1)
+        // A lane the run never serves, whether dropped by the poll's timeout
+        // or left buffered when the run ends, is refused rather than waiting.
+        val calls = Channel<CallLane>(1, onUndeliveredElement = { it.done.completeExceptionally(CallLaneUnavailable()) })
         var handle = 0L
         lateinit var job: Job
         // Written and read on Main, after native borrowers have returned.
         var cleanupFailure: RunCleanupFailure? = null
     }
     private class RunCleanupFailure(val failure: ConnectionFailure, val nativeCode: Int = 0)
+    private class RunNetworkLost : Exception()
+    private class NetworkMonitorUnavailable : Exception()
     private data class Probe(val packet: Boolean, val service: String, val host: String, val port: Int)
 
     init {
@@ -111,7 +130,8 @@ class ConnectionController(context: Context, private val services: ServiceContro
                     withContext(Dispatchers.IO) { ItoNative.liveHandles(); store.recoverStaging() }
                     initialized = true
                     reload()
-                } catch (_: StoreException) { initializationFailed(ConnectionFailure.Storage) }
+                } catch (_: com.fixcraft.ito.security.AppLockedException) { initializationFailed(ConnectionFailure.Storage) }
+                catch (_: StoreException) { initializationFailed(ConnectionFailure.Storage) }
                 catch (_: LinkageError) { initializationFailed(ConnectionFailure.Native, -13) }
             }
         }
@@ -126,7 +146,8 @@ class ConnectionController(context: Context, private val services: ServiceContro
                     initialized = true
                 }
                 reload()
-            } catch (failure: StoreException) { storageFailed(failure) }
+            } catch (_: com.fixcraft.ito.security.AppLockedException) { initializationFailed(ConnectionFailure.Storage) }
+            catch (failure: StoreException) { storageFailed(failure) }
             catch (_: LinkageError) { initializationFailed(ConnectionFailure.Native, -13) }
         }
     }
@@ -135,16 +156,10 @@ class ConnectionController(context: Context, private val services: ServiceContro
         withContext(Dispatchers.IO) { store.select(id); services?.selectManual() }
         reload()
     }
-    fun selectProvider(selection: ServiceSelection) = command {
-        stopRun()
-        requireNotNull(services).select(selection)
-    }
-
-    fun provisionProvider(provider: String, catalog: ProviderCodec.Catalog, service: String, server: String) = command {
-        // Rotation invalidates its captured permit through the shared owner. A
-        // different authority ends the current run before publication can select it.
-        if (current?.provider != provider) stopRun()
-        requireNotNull(services).install(provider, catalog, service, server)
+    /** Serializes an explicit application authority change with native teardown. */
+    fun changeAuthority(provider: String? = null, action: suspend () -> Unit) = command {
+        if (provider == null || current?.provider != provider) stopRun()
+        action()
     }
 
     fun selectNetwork(handle: Long?) = command {
@@ -160,6 +175,9 @@ class ConnectionController(context: Context, private val services: ServiceContro
 
     /** The URI and opening code are process-local and never enter saved state or logs. */
     fun importDocument(uri: Uri, label: String, openingCode: CharArray) {
+        try { requireAccess() } catch (_: com.fixcraft.ito.security.AppLockedException) {
+            openingCode.fill('\u0000'); fail(ConnectionFailure.Storage); return
+        }
         if (importer?.isCompleted == false) {
             openingCode.fill('\u0000')
             fail(ConnectionFailure.Input)
@@ -205,7 +223,8 @@ class ConnectionController(context: Context, private val services: ServiceContro
                 } finally { sealed.fill(0) }
             } catch (_: TimeoutCancellationException) { fail(ConnectionFailure.Input) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (refusal: ProviderCodec.Refusal) { providerFailed(refusal.code) }
+            catch (_: com.fixcraft.ito.security.AppLockedException) { fail(ConnectionFailure.Storage) }
+            catch (refusal: ServiceRefusal) { providerFailed(refusal.code) }
             catch (failure: NativeFailure) { fail(ConnectionFailure.Native, failure.code) }
             catch (failure: StoreException) { storageFailed(failure) }
             catch (_: IOException) { fail(ConnectionFailure.Input) }
@@ -235,7 +254,7 @@ class ConnectionController(context: Context, private val services: ServiceContro
                 validateImportStaging(store.stage(referenced))
                 currentCoroutineContext().ensureActive()
                 val coroutine = currentCoroutineContext()
-                store.importConfiguration(label, referenced) { coroutine.ensureActive() }
+                store.importConfiguration(label, referenced) { coroutine.ensureActive(); requireAccess() }
             } finally { opened.forEach { it.bytes.fill(0) } }
         } finally { code.fill(0) }
     }
@@ -245,19 +264,22 @@ class ConnectionController(context: Context, private val services: ServiceContro
         val provider = withContext(Dispatchers.IO) { services?.selectedForRestart() }
         val selected = if (provider == null) withContext(Dispatchers.IO) { store.list().selectedId }
             ?: throw IllegalArgumentException() else null
-        val network = chosenNetwork() ?: run { fail(ConnectionFailure.NetworkUnavailable); return@command }
-        val run = Run(++generation, network, provider?.provider)
+        val (network, route) = chosenNetwork() ?: run { fail(ConnectionFailure.NetworkUnavailable); return@command }
+        val run = Run(++generation, network, route, provider?.provider)
         current = run
         mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Starting, failure = ConnectionFailure.None,
             nativeCode = 0, providerCode = "", peer = "", generation = run.generation, boundSockets = 0, receipts = emptyList())
-        run.job = scope.launch(Dispatchers.IO) { execute(run, selected, provider) }
+        // A network callback may request Stop as soon as it is registered.
+        // Publish the job before its worker can install those callbacks.
+        run.job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) { execute(run, selected, provider) }
+        run.job.start()
     }
 
     fun stop(): Job {
         val wasStarting = mutableState.value.phase == ConnectionPhase.Starting
         importSignal?.cancel()
         importer?.cancel()
-        return command {
+        return command(accessRequired = false) {
             stopRun()
             reload()
             if (wasStarting) mutableState.value = mutableState.value.copy(failure = ConnectionFailure.Cancelled, nativeCode = ItoNative.CANCELLED)
@@ -274,21 +296,87 @@ class ConnectionController(context: Context, private val services: ServiceContro
             !run.probes.trySend(Probe(packet, service, host, port)).isSuccess) fail(ConnectionFailure.Input)
     }
 
-    private suspend fun execute(run: Run, selected: String?, provider: ServiceSelection?) {
+    /** Runs lane on the connected run and returns when its attempt ended. */
+    suspend fun serveCall(lane: CallLane) {
+        val run = current
+        if (run == null || mutableState.value.phase != ConnectionPhase.Connected || !run.calls.trySend(lane).isSuccess) {
+            throw CallLaneUnavailable()
+        }
+        try { lane.done.await() } finally {
+            // A lane the run never reached is refused, not left waiting.
+            lane.done.completeExceptionally(CallLaneUnavailable())
+        }
+    }
+
+    private fun serveLane(run: Run, lane: CallLane, authorityValid: () -> Boolean) {
+        // Its caller stopped waiting before the run reached it.
+        if (lane.done.isCompleted) return
+        val stream = try { ItoNative.openCallStream(run.handle, lane.service) }
+        catch (failure: NativeFailure) { lane.done.completeExceptionally(failure); return }
+        try {
+            // Its caller may also have stopped waiting while the stream opened.
+            if (lane.done.isCompleted) return
+            val fingerprint = ItoNative.callStreamFingerprint(stream)
+            lane.use(stream, fingerprint, authorityValid)
+            lane.done.complete(Unit)
+        } catch (error: Exception) {
+            lane.done.completeExceptionally(error)
+        } finally { ItoNative.closeCallStream(stream) }
+    }
+
+    private suspend fun execute(run: Run, selected: String?, provider: SelectedService?) {
         var callback: ConnectivityManager.NetworkCallback? = null
         var callbackRegistered = false
+        var defaultCallback: ConnectivityManager.NetworkCallback? = null
+        var defaultCallbackRegistered = false
         var session: AutoCloseable? = null
         var authorityWatch: Job? = null
-        var permit: ServiceController<ItoProviderSession>.RunPermit? = null
+        var permit: ServicePermit? = null
         try {
+                callback = object : ConnectivityManager.NetworkCallback() {
+                    override fun onLost(network: Network) {
+                        if (network == run.network) networkLost(run)
+                    }
+                    override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                        if (network == run.network && !run.route.acceptsNetwork(describeNetwork(network, capabilities))) networkLost(run)
+                    }
+                    override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                        if (network == run.network && blocked) networkLost(run)
+                    }
+                }
+                defaultCallback = object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        if (network.networkHandle != run.route.defaultNetwork.handle) networkLost(run)
+                    }
+                    override fun onLost(network: Network) {
+                        if (network.networkHandle == run.route.defaultNetwork.handle) networkLost(run)
+                    }
+                    override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                        if (!run.route.acceptsDefault(describeNetwork(network, capabilities))) networkLost(run)
+                    }
+                    override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                        if (network.networkHandle == run.route.defaultNetwork.handle && blocked) networkLost(run)
+                    }
+                }
+                try {
+                    // NetworkRequest otherwise excludes VPNs by default.
+                    connectivity.registerNetworkCallback(NetworkRequest.Builder()
+                        .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), callback!!)
+                    callbackRegistered = true
+                    connectivity.registerDefaultNetworkCallback(defaultCallback!!)
+                    defaultCallbackRegistered = true
+                } catch (_: RuntimeException) { throw NetworkMonitorUnavailable() }
+                requireCapturedNetwork(run)
+                requireAccess()
                 val config: ByteArray
                 val directory: java.io.File
                 if (provider != null) {
                     val opened = requireNotNull(services).open(provider)
                     session = opened
                     permit = opened.permit
-                    config = opened.session.config
-                    directory = opened.session.directory
+                    config = opened.config
+                    directory = opened.directory
                     authorityWatch = scope.launch(Dispatchers.IO) {
                         // Keystore/time checks stay off Main; the atomic captured-run
                         // stop flag and the Main stop owner settle lifetime separately.
@@ -298,7 +386,10 @@ class ConnectionController(context: Context, private val services: ServiceContro
                                 // when the native borrower exits its finally block.
                                 scope.launch {
                                     operations.withLock {
-                                        if (current === run) { stopRun(); providerFailed("revoked") }
+                                        if (current === run) {
+                                            try { stopRun(); providerFailed("revoked") }
+                                            catch (failure: StoreException) { storageFailed(failure) }
+                                        }
                                     }
                                 }
                                 break
@@ -313,45 +404,47 @@ class ConnectionController(context: Context, private val services: ServiceContro
                     directory = materialized.directory
                 }
                 fun checkAuthority() {
-                    if (permit?.valid() == false) throw ProviderCodec.Refusal("revoked")
+                    if (permit?.valid() == false) throw ServiceRefusal("revoked")
                 }
                 checkAuthority()
                 val description = ManualConfiguration.describe(config)
+                requireCapturedNetwork(run)
                 val address = resolve(run.network, description.dialAddress ?: description.host)
                 currentCoroutineContext().ensureActive()
+                requireCapturedNetwork(run)
                 val adapted = ManualConfiguration.forNetwork(config, address.hostAddress ?: throw IOException())
                 try {
                     val identity = ItoNative.validate(adapted, directory.absolutePath)
                     try {
-                        if (provider != null && hex(identity) != provider.identity) throw ProviderCodec.Refusal("binding")
+                        if (provider != null && hex(identity) != provider.identity) throw ServiceRefusal("binding")
                         publish(run) { it.copy(localIdentity = hex(identity)) }
                     } finally { identity.fill(0) }
                     synchronized(run.monitor) {
                         if (run.stopped.get()) throw CancellationException()
                         run.handle = ItoNative.create(adapted, directory.absolutePath, SocketBinder { fd ->
                             if (run.stopped.get()) false else try {
+                                if (!capturedNetworkCurrent(run)) {
+                                    networkLost(run)
+                                    return@SocketBinder false
+                                }
                                 ParcelFileDescriptor.fromFd(fd).use { run.network.bindSocket(it.fileDescriptor) }
+                                if (run.stopped.get()) return@SocketBinder false
+                                if (!capturedNetworkCurrent(run)) {
+                                    networkLost(run)
+                                    return@SocketBinder false
+                                }
                                 run.boundSockets.incrementAndGet()
                                 true
                             } catch (_: IOException) { false } catch (_: RuntimeException) { false }
                         })
                     }
                 } finally { adapted.fill(0) }
-                callback = object : ConnectivityManager.NetworkCallback() {
-                    override fun onLost(network: Network) {
-                        if (network == run.network) scope.launch {
-                            operations.withLock {
-                                if (current === run) { stopRun(); fail(ConnectionFailure.NetworkLost) }
-                            }
-                        }
-                    }
-                }
-                connectivity.registerNetworkCallback(NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback!!)
-                callbackRegistered = true
+                requireCapturedNetwork(run)
                 checkAuthority()
                 val result = ItoNative.start(run.handle, 20_000)
                 if (result != ItoNative.OK) throw NativeFailure(result, "start")
                 while (!run.stopped.get()) {
+                    requireCapturedNetwork(run)
                     checkAuthority()
                     currentCoroutineContext().ensureActive()
                     val status = ItoNative.status(run.handle)
@@ -359,7 +452,21 @@ class ConnectionController(context: Context, private val services: ServiceContro
                         throw NativeFailure(if (status.lastFailure != 0) status.lastFailure else -12, "session")
                     }
                     publish(run) { it.copy(phase = ConnectionPhase.Connected, peer = hex(status.peerFingerprint), boundSockets = run.boundSockets.get()) }
-                    val probe = withTimeoutOrNull(200) { run.probes.receive() } ?: continue
+                    val request = withTimeoutOrNull(200) {
+                        select<Any> {
+                            run.probes.onReceive { it }
+                            run.calls.onReceive { it }
+                        }
+                    } ?: continue
+                    if (request is CallLane) {
+                        try { checkAuthority() } catch (refusal: Throwable) {
+                            request.done.completeExceptionally(CallLaneUnavailable())
+                            throw refusal
+                        }
+                        serveLane(run, request) { !run.stopped.get() && permit?.valid() != false }
+                        continue
+                    }
+                    val probe = request as Probe
                     checkAuthority()
                     require(probe.service in if (probe.packet) description.packets else description.streams)
                     val payload = ByteArray(if (probe.packet) 1024 else 65_536).also { SecureRandom().nextBytes(it) }
@@ -382,6 +489,10 @@ class ConnectionController(context: Context, private val services: ServiceContro
                         } finally { response.bytes.fill(0); response.peerFingerprint.fill(0) }
                     } finally { payload.fill(0) }
                 }
+        } catch (_: RunNetworkLost) {
+            // The network stop owner publishes after joining all native borrowers.
+        } catch (_: NetworkMonitorUnavailable) {
+            publish(run) { it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.NetworkUnavailable) }
         } catch (_: TimeoutCancellationException) {
             publish(run) { it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.Resolve) }
         } catch (_: CancellationException) {
@@ -394,7 +505,9 @@ class ConnectionController(context: Context, private val services: ServiceContro
                 else it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.Native,
                     nativeCode = failure.code, boundSockets = run.boundSockets.get())
             }
-        } catch (refusal: ProviderCodec.Refusal) {
+        } catch (_: com.fixcraft.ito.security.AppLockedException) {
+            publish(run) { it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.Storage) }
+        } catch (refusal: ServiceRefusal) {
             publish(run) { it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.Provider, providerCode = refusal.code) }
         } catch (_: DataMismatch) {
             publish(run) { it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.DataMismatch) }
@@ -412,9 +525,14 @@ class ConnectionController(context: Context, private val services: ServiceContro
             publish(run) { it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.NetworkUnavailable) }
         } finally {
             authorityWatch?.cancel()
+            // Refuses a lane still buffered when the run ended by itself.
+            run.calls.cancel()
             var cleanupFailed = false
             try {
                 if (callbackRegistered) callback?.let { connectivity.unregisterNetworkCallback(it) }
+            } catch (_: RuntimeException) { cleanupFailed = true }
+            try {
+                if (defaultCallbackRegistered) defaultCallback?.let { connectivity.unregisterNetworkCallback(it) }
             } catch (_: RuntimeException) { cleanupFailed = true }
             try {
                 try {
@@ -429,7 +547,7 @@ class ConnectionController(context: Context, private val services: ServiceContro
                 finally {
                     try { session?.close() }
                     catch (_: StoreException) { cleanupFailed = true }
-                    catch (_: ProviderCodec.Refusal) { cleanupFailed = true }
+                    catch (_: ServiceRefusal) { cleanupFailed = true }
                 }
             } finally {
                 if (cleanupFailed) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main.immediate) {
@@ -461,6 +579,9 @@ class ConnectionController(context: Context, private val services: ServiceContro
         finally {
             run.job.cancelAndJoin()
             run.probes.close()
+            run.calls.close()
+            // A lane queued behind the stop never runs.
+            run.calls.tryReceive().getOrNull()?.done?.completeExceptionally(CallLaneUnavailable())
             current = null
         }
         val failure = if (stopFailure) RunCleanupFailure(ConnectionFailure.Native, -3)
@@ -470,28 +591,69 @@ class ConnectionController(context: Context, private val services: ServiceContro
     }
 
     private suspend fun reload() {
-        val catalog = withContext(Dispatchers.IO) { store.list() }
+        val catalog = withContext(Dispatchers.IO) { requireAccess(); store.list() }
+        val networks = knownNetworks()
+        val selectable = selectableConnectionNetworks(currentDefaultNetwork(), networks.map { (network, capabilities) ->
+            describeNetwork(network, capabilities)
+        }).map { it.handle }.toSet()
         mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Idle, failure = ConnectionFailure.None, nativeCode = 0, providerCode = "",
-            catalog = catalog, networks = availableNetworks().map { (network, capabilities) ->
+            catalog = catalog, networks = networks.filter { it.first.networkHandle in selectable }.map { (network, capabilities) ->
                 NetworkChoice(network.networkHandle, capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
                     !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
             })
     }
 
-    private fun availableNetworks() = connectivity.allNetworks.mapNotNull { network ->
-        connectivity.getNetworkCapabilities(network)?.takeIf {
-            it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && it.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-        }?.let { network to it }
-    }
-    private fun chosenNetwork(): Network? {
-        val selected = mutableState.value.selectedNetwork
-        return if (selected == null) connectivity.activeNetwork?.takeIf { active -> availableNetworks().any { it.first == active } }
-        else availableNetworks().firstOrNull { it.first.networkHandle == selected }?.first
+    private fun knownNetworks() = connectivity.allNetworks.mapNotNull { network ->
+        connectivity.getNetworkCapabilities(network)?.let { network to it }
     }
 
-    private suspend fun resolve(network: Network, host: String): InetAddress = withTimeout(5000) {
+    private fun describeNetwork(network: Network, capabilities: NetworkCapabilities) = ConnectionNetwork(
+        network.networkHandle, capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+        !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN),
+    )
+
+    private fun currentNetwork(network: Network): ConnectionNetwork? =
+        connectivity.getNetworkCapabilities(network)?.let { describeNetwork(network, it) }
+
+    private fun currentDefaultNetwork(): ConnectionNetwork? = connectivity.activeNetwork?.let(::currentNetwork)
+
+    private fun chosenNetwork(): Pair<Network, CapturedConnectionNetwork>? {
+        val active = connectivity.activeNetwork ?: return null
+        val networks = knownNetworks()
+        val route = captureConnectionNetwork(mutableState.value.selectedNetwork, currentNetwork(active),
+            networks.map { (network, capabilities) -> describeNetwork(network, capabilities) }) ?: return null
+        val network = if (route.network.handle == active.networkHandle) active
+        else networks.firstOrNull { it.first.networkHandle == route.network.handle }?.first ?: return null
+        return network to route
+    }
+
+    private fun capturedNetworkCurrent(run: Run): Boolean = !run.networkLost.get() &&
+        run.route.acceptsDefault(currentDefaultNetwork()) && run.route.acceptsNetwork(currentNetwork(run.network))
+
+    private fun requireCapturedNetwork(run: Run) {
+        if (!capturedNetworkCurrent(run)) {
+            networkLost(run)
+            throw RunNetworkLost()
+        }
+    }
+
+    /** Latch on the callback's thread; the Main owner stops and joins the run. */
+    private fun networkLost(run: Run) {
+        if (!run.networkLost.compareAndSet(false, true)) return
+        run.stopped.set(true)
+        scope.launch {
+            operations.withLock {
+                if (current === run) {
+                    try { stopRun(); fail(ConnectionFailure.NetworkLost) }
+                    catch (failure: StoreException) { storageFailed(failure) }
+                }
+            }
+        }
+    }
+
+    private suspend fun resolve(network: Network, host: String): InetAddress = boundedResolution {
         if (Build.VERSION.SDK_INT < 29) throw IOException("bounded DNS unavailable")
-        if (android.net.InetAddresses.isNumericAddress(host)) return@withTimeout android.net.InetAddresses.parseNumericAddress(host)
+        if (android.net.InetAddresses.isNumericAddress(host)) return@boundedResolution android.net.InetAddresses.parseNumericAddress(host)
         suspendCancellableCoroutine { continuation ->
             val cancellation = CancellationSignal()
             continuation.invokeOnCancellation { cancellation.cancel() }
@@ -511,14 +673,16 @@ class ConnectionController(context: Context, private val services: ServiceContro
         }
     }
 
-    private fun command(action: suspend () -> Unit): Job = scope.launch {
+    private fun command(accessRequired: Boolean = true, action: suspend () -> Unit): Job = scope.launch {
         operations.withLock {
             try {
                 if (!initialized) { fail(initializationFailure.first, initializationFailure.second); return@withLock }
+                if (accessRequired) requireAccess()
                 action()
             }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (refusal: ProviderCodec.Refusal) { providerFailed(refusal.code) }
+            catch (_: com.fixcraft.ito.security.AppLockedException) { fail(ConnectionFailure.Storage) }
+            catch (refusal: ServiceRefusal) { providerFailed(refusal.code) }
             catch (failure: NativeFailure) { fail(ConnectionFailure.Native, failure.code) }
             catch (failure: StoreException) { storageFailed(failure) }
             catch (_: IOException) { fail(ConnectionFailure.Input) }

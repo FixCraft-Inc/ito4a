@@ -2,6 +2,7 @@ package com.fixcraft.ito.data
 
 import com.fixcraft.ito.domain.AudioPreference
 import com.fixcraft.ito.domain.Preferences
+import com.fixcraft.ito.domain.Presentation
 import com.fixcraft.ito.domain.RoutingPreference
 import com.fixcraft.ito.domain.SavedService
 import com.fixcraft.ito.domain.ServiceOrigin
@@ -21,8 +22,12 @@ object PreferencesCodec {
         if (text.length !in 1..MAX_CHARACTERS) throw InvalidPreferences()
         try {
             val root = JSONObject(text)
-            require(root.keys().asSequence().toSet() == setOf("schema", "routing", "audio", "services"))
-            require(root.get("schema") == 1)
+            // Schema 1 predates the presentation choice and reads as Simple.
+            val schema = root.get("schema")
+            val keys = setOf("schema", "routing", "audio", "services")
+            require((schema == 1 && root.keys().asSequence().toSet() == keys) ||
+                (schema == 2 && root.keys().asSequence().toSet() == keys + "presentation"))
+            val presentation = if (schema == 2) Presentation.valueOf(string(root, "presentation")) else Presentation.Simple
             val routing = RoutingPreference.valueOf(string(root, "routing"))
             val audio = AudioPreference.valueOf(string(root, "audio"))
             val list = root.getJSONArray("services")
@@ -37,7 +42,7 @@ object PreferencesCodec {
                 requireNotNull(origin)
                 SavedService(id, string(entry, "name"), origin)
             }
-            return Preferences(routing, audio, services)
+            return Preferences(routing, audio, services, presentation)
         } catch (_: JSONException) {
             throw InvalidPreferences()
         } catch (_: IllegalArgumentException) {
@@ -57,9 +62,10 @@ object PreferencesCodec {
             services.put(JSONObject().put("id", service.id.toString())
                 .put("name", service.name).put("origin", service.origin.value))
         }
-        return JSONObject().put("schema", 1)
+        return JSONObject().put("schema", 2)
             .put("routing", preferences.routing.name)
             .put("audio", preferences.audio.name)
-            .put("services", services).toString()
+            .put("services", services)
+            .put("presentation", preferences.presentation.name).toString()
     }
 }

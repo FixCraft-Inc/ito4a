@@ -1,0 +1,7 @@
+/* The packaged library exports the C interface only. */
+ITO_CALL_1 {
+    global:
+        ito_*;
+    local:
+        *;
+};

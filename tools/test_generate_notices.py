@@ -35,6 +35,10 @@ class NoticeGenerationTest(unittest.TestCase):
         self.native = self.root / "native"
         (self.native / "x86_64").mkdir(parents=True)
         (self.native / "x86_64/libyume.so").write_bytes(b"core binary")
+        self.call = self.root / "call"
+        (self.call / "x86_64").mkdir(parents=True)
+        (self.call / "x86_64/libitocall.so").write_bytes(b"call core binary")
+        self.call_provenance = self.call / "provenance.json"
         self.ndk = self.root / "ndk"
         runtime = self.ndk / "toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so"
         runtime.parent.mkdir(parents=True)
@@ -47,6 +51,7 @@ class NoticeGenerationTest(unittest.TestCase):
             "schema": 1, "ndk": "28.2.13676358", "nativeGuards": {
                 "dependencies.json": digest(self.guard.read_bytes())},
             "common": ["LICENSE"], "sourceComponents": [{"name": "example", "notices": ["LICENSE"]}],
+            "callCore": {"openssl_archive_sha256": "pinned-archive"},
             "sources": {"LICENSE": {"path": "LICENSE", "sha256": digest(self.license.read_bytes()),
                                       "origin": "synthetic license fixture"}},
             "artifacts": {"example:library:1": {"sha256": digest(self.artifact.read_bytes()),
@@ -61,14 +66,23 @@ class NoticeGenerationTest(unittest.TestCase):
             "inputs_sha256": "fixture-input-binding", "unverified_test_source": True,
             "artifacts": {"x86_64/libyume.so": {"sha256": digest(b"core binary")}},
         }))
+        self.write_call_provenance()
+
+    def write_call_provenance(self, archive: str = "pinned-archive") -> None:
+        self.call_provenance.write_text(json.dumps({
+            "schema": 1, "ndk": "28.2.13676358", "openssl_archive_sha256": archive,
+            "core_sources_sha256": "fixture-core-sources",
+            "libraries": {"x86_64": digest(b"call core binary")},
+        }))
 
     def run_generator(self) -> dict:
-        return generate(self.root, self.yume, self.catalog, self.resolved, self.provenance, self.output)
+        return generate(self.root, self.yume, self.catalog, self.resolved, self.provenance, self.output,
+                        self.call_provenance)
 
     def add_provider(self, *, altered_entry: bool = False, wrong_binding: bool = False) -> None:
         entry = {"mode": 0o644, "sha256": digest(b"provider source"), "size": 15}
         source = digest(f"src/main/Provider.kt\0{entry['mode']}\0{entry['sha256']}\n".encode())
-        provenance = {"schema": 1, "component": "com.fixcraft.yume:provider-library", "version": "0.1.0",
+        provenance = {"schema": 1, "component": "com.fixcraft.yume:provider-library", "version": "0.3.0",
                       "source_sha256": source, "files": {"src/main/Provider.kt": entry}}
         if altered_entry:
             entry["sha256"] = "f" * 64
@@ -76,15 +90,15 @@ class NoticeGenerationTest(unittest.TestCase):
         with zipfile.ZipFile(artifact, "w") as archive:
             archive.writestr("assets/provider-library/provenance.json", json.dumps(provenance))
         resolved = json.loads(self.resolved.read_text())
-        resolved["artifacts"].append({"coordinate": "com.fixcraft.yume:provider-library:0.1.0", "path": str(artifact)})
-        resolved["providerIdentity"] = {"version": "0.1.0", "source_sha256": "e" * 64 if wrong_binding else source}
+        resolved["artifacts"].append({"coordinate": "com.fixcraft.yume:provider-library:0.3.0", "path": str(artifact)})
+        resolved["providerIdentity"] = {"version": "0.3.0", "source_sha256": "e" * 64 if wrong_binding else source}
         self.resolved.write_text(json.dumps(resolved))
 
     def test_provider_source_aar_keeps_exact_runtime_hash_and_source_binding(self) -> None:
         self.add_provider()
         self.run_generator()
         result = json.loads((self.output / "notices/manifest.json").read_text())
-        self.assertEqual(result["providerIdentity"]["version"], "0.1.0")
+        self.assertEqual(result["providerIdentity"]["version"], "0.3.0")
         provider = next(item for item in result["artifacts"] if item["coordinate"].startswith("com.fixcraft.yume:"))
         self.assertEqual(provider["sha256"], digest((self.root / "provider-library.aar").read_bytes()))
 
@@ -98,10 +112,46 @@ class NoticeGenerationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "manifest is inconsistent"):
             self.run_generator()
 
+    def test_minimal_inventory_omits_provider_source_claim(self) -> None:
+        self.catalog_value["sourceComponents"].append({
+            "name": "YUME shared Android provider library", "notices": ["LICENSE"]})
+        self.catalog.write_text(json.dumps(self.catalog_value))
+        resolved = json.loads(self.resolved.read_text())
+        resolved["providersEnabled"] = False
+        self.resolved.write_text(json.dumps(resolved))
+        self.run_generator()
+        result = json.loads((self.output / "notices/manifest.json").read_text())
+        self.assertFalse(result["providersEnabled"])
+        self.assertNotIn("providerIdentity", result)
+        self.assertEqual([component["name"] for component in result["sourceComponents"]], ["example"])
+
+    def test_minimal_inventory_refuses_hidden_provider_dependency(self) -> None:
+        coordinate = "net.openid:appauth:0.11.1"
+        self.catalog_value["artifacts"][coordinate] = {
+            "sha256": digest(self.artifact.read_bytes()), "notices": ["LICENSE"]}
+        self.catalog.write_text(json.dumps(self.catalog_value))
+        resolved = json.loads(self.resolved.read_text())
+        resolved["providersEnabled"] = False
+        resolved["artifacts"].append({"coordinate": coordinate, "path": str(self.artifact)})
+        self.resolved.write_text(json.dumps(resolved))
+        with self.assertRaisesRegex(ValueError, "Minimal build contains provider dependency"):
+            self.run_generator()
+        self.assertFalse(self.output.exists())
+
+    def test_enabled_inventory_requires_advertised_provider(self) -> None:
+        self.catalog_value["sourceComponents"].append({
+            "name": "YUME shared Android provider library", "notices": ["LICENSE"]})
+        self.catalog.write_text(json.dumps(self.catalog_value))
+        resolved = json.loads(self.resolved.read_text())
+        resolved["providersEnabled"] = True
+        self.resolved.write_text(json.dumps(resolved))
+        with self.assertRaisesRegex(ValueError, "Missing shared provider source artifact"):
+            self.run_generator()
+
     def test_complete_inventory_and_replacement(self) -> None:
         result = self.run_generator()
         self.assertEqual(result["artifacts"], 1)
-        self.assertEqual(result["native_libraries"], 2)
+        self.assertEqual(result["native_libraries"], 3)  # libyume, libitocall, libc++_shared
         (self.output / "notices/stale.txt").write_bytes(b"stale")
         self.run_generator()
         self.assertFalse((self.output / "notices/stale.txt").exists())
@@ -135,6 +185,22 @@ class NoticeGenerationTest(unittest.TestCase):
     def test_changed_native_library_refuses(self) -> None:
         (self.native / "x86_64/libyume.so").write_bytes(b"another core binary")
         with self.assertRaisesRegex(ValueError, "Native library differs from provenance"):
+            self.run_generator()
+
+    def test_call_core_library_is_bound(self) -> None:
+        self.run_generator()
+        manifest = json.loads((self.output / "notices/manifest.json").read_text())
+        self.assertEqual(manifest["nativeLibraries"]["lib/x86_64/libitocall.so"], digest(b"call core binary"))
+        self.assertEqual(manifest["callIdentity"]["openssl_archive_sha256"], "pinned-archive")
+
+    def test_changed_call_library_refuses(self) -> None:
+        (self.call / "x86_64/libitocall.so").write_bytes(b"other call binary")
+        with self.assertRaisesRegex(ValueError, "Call core library differs from provenance"):
+            self.run_generator()
+
+    def test_changed_call_openssl_refuses(self) -> None:
+        self.write_call_provenance("another-archive")
+        with self.assertRaisesRegex(ValueError, "notice review required"):
             self.run_generator()
 
     def test_changed_ndk_refuses(self) -> None:

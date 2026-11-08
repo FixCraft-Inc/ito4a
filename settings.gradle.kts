@@ -17,10 +17,16 @@ dependencyResolutionManagement {
 rootProject.name = "Ito"
 include(":app")
 
-// Independent provider sources; neither application is a dependency of the other.
-val providerRoot = providers.gradleProperty("itoProviderRoot").orNull
-    ?: error("Set -PitoProviderRoot to the qualified yume4a/provider-library checkout")
-val providerDirectory = file(providerRoot)
-require(providerDirectory.resolve("VERSION").readText().trim() == "0.1.0") { "Unsupported provider library version" }
-include(":provider-library")
-project(":provider-library").projectDir = providerDirectory
+// The minimal build never resolves provider source or its dependencies.
+val providersEnabled = providers.gradleProperty("itoProviders").orElse("false").get().let {
+    require(it == "true" || it == "false") { "itoProviders must be true or false" }
+    it == "true"
+}
+if (providersEnabled) {
+    val providerRoot = providers.gradleProperty("itoProviderRoot").orNull
+        ?: error("Enabled providers require -PitoProviderRoot")
+    val providerDirectory = file(providerRoot)
+    require(providerDirectory.resolve("VERSION").readText().trim() == "0.3.0") { "Unsupported provider library version" }
+    include(":provider-library")
+    project(":provider-library").projectDir = providerDirectory
+}

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+    <application android:networkSecurityConfig="@xml/provider_test_network_security">
+        <activity android:name="com.fixcraft.yume.provider.ProviderCallbackActivity"
+            tools:ignore="AppLinkUrlError"
+            android:exported="${providerCallbackEnabled}" android:noHistory="true"
+            android:excludeFromRecents="true" android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${providerCallbackHost}"
+                    android:path="/ito/oauth/callback" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

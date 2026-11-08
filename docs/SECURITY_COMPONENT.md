@@ -5,8 +5,8 @@ reliable end-to-end channel specified in [calling security](CALL_SECURITY.md).
 TLS 1.3 owns authenticated key exchange, traffic keys, nonces, ordered record
 protection and KeyUpdate. Ito owns confidential invitation delivery, independent
 contact verification, exporter-bound identity proofs, consent, policy and
-bounded state. This decision does not add the component to the Android runtime
-or implement a calling endpoint.
+bounded state. The [call core](../native/call/README.md) links this component
+into its own library for Android and Linux.
 
 ## Selected source and support
 
@@ -15,7 +15,7 @@ The release tag `openssl-3.5.9` points to commit
 has SHA-256
 `603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a`.
 [tools/security-component.json](../tools/security-component.json) owns the
-evaluation pin. The [release](https://github.com/openssl/openssl/releases/tag/openssl-3.5.9)
+evaluation and call-core pin. The [release](https://github.com/openssl/openssl/releases/tag/openssl-3.5.9)
 and [official checksum](https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz.sha256)
 provide provenance. HTTPS metadata and checksums do not establish independent
 verification of the publisher's signing key.
@@ -66,10 +66,10 @@ as cache/early data. Older TLS 1.2 PSK callbacks cannot express the SHA-384
 profile correctly. These choices need endpoint regression tests.
 
 Upstream [Android instructions](https://github.com/openssl/openssl/blob/45e844fa2a14ec92d146bd8f5778ac130b6625fb/NOTES-ANDROID.md)
-provide explicit NDK targets, not Android runtime qualification. Later integration
-needs a separate narrow native security target, an explicit private library
-context/default provider and hidden symbols. Ito's current JNI links only
-public libyume, whose internal OpenSSL symbols are not an app API. Avoid symbol
+provide explicit NDK targets, not Android runtime qualification. Ito builds
+the call core as a separate native target with a private library context,
+default provider and hidden symbols. JNI links both public libyume and
+libitocall; libyume's internal OpenSSL symbols are not an app API. Avoid symbol
 interposition between the transport's static OpenSSL and the separately linked
 component. Do not change the YUME ABI or expose transport keys to reuse a
 library. No BaseFWX dependency is needed.
@@ -115,9 +115,9 @@ application data store, microphone or Android calls participate.
 
 The case list is executable evidence of component operations and refusal,
 including independent known-answer cryptographic checks. A fixed context digest
-fixture tests signature binding, not the application's future invitation/frame
+fixture tests signature binding, not the application's invitation/frame
 parser or consent/replay state. The harness is not production endpoint code.
-Later integration must qualify all call-contract gates, two real endpoints
+Endpoint integration must qualify all call-contract gates, two real endpoints
 through the service, Android storage/JNI/cancellation, hidden symbol provenance,
 notices, physical-device behavior and release packaging. Component execution
 does not establish working calls, codec behavior, physical accessibility,

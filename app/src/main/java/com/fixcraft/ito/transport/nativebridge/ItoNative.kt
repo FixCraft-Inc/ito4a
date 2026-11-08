@@ -64,6 +64,12 @@ object ItoNative {
         destination: String, port: Int, payload: ByteArray
     ): NativeEcho
 
+    /** A named-service stream lent to the call core. Close it after the call run returned. */
+    external fun openCallStream(handle: Long, service: String): Long
+    /** The stream's verified server fingerprint: the call's relay authority. */
+    external fun callStreamFingerprint(stream: Long): ByteArray
+    external fun closeCallStream(stream: Long)
+
     /** Runtime/config/endpoint/kit/global callback/stream/packet owners, for lifecycle checks. */
     external fun liveHandles(): LongArray
 }

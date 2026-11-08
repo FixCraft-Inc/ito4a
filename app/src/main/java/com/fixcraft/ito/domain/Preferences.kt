@@ -7,6 +7,13 @@ enum class RoutingPreference { ProtectedOnly, DirectAllowed }
 
 enum class AudioPreference { Adaptive, Economy, Emergency }
 
+/**
+ * How much the screens show. Advanced adds network choices, server addresses,
+ * identities and connection tests. It never changes authorization, routing,
+ * privacy defaults or validation.
+ */
+enum class Presentation { Simple, Advanced }
+
 /** A user-entered address, not an authenticated provider or an enrollment. */
 @JvmInline
 value class ServiceOrigin private constructor(val value: String) {
@@ -42,6 +49,7 @@ data class Preferences(
     val routing: RoutingPreference = RoutingPreference.ProtectedOnly,
     val audio: AudioPreference = AudioPreference.Adaptive,
     val services: List<SavedService> = emptyList(),
+    val presentation: Presentation = Presentation.Simple,
 ) {
     init {
         require(services.size <= MAX_SERVICES)

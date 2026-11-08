@@ -12,14 +12,18 @@ address, not proof of a provider's identity or an authorization grant.
 Missing preferences use protected routing and adaptive audio. Unreadable,
 unsupported or invalid saved state is shown as an error and is not rewritten
 with defaults. Service removal preserves routing and audio preferences.
-Changing audio quality cannot enable a direct path. Enabling direct calling
-requires the user to accept an IP-disclosure explanation.
+Changing audio quality cannot enable a direct path. Settings do not offer
+either choice while direct calls and lower-data audio are unimplemented. They
+state the fixed behaviour instead: relay service only and standard Opus audio.
+When direct calling exists, enabling it must show the IP-disclosure
+explanation again. A value stored by an earlier build is not that consent.
 
 The pure call policy rejects media without authenticated peers and end-to-end
 encryption. A YUME path additionally requires authenticated YUME; a direct
-path additionally requires the user's direct-path choice. No media producer
-calls this policy yet. Tests establish its decisions, not any encryption or
-transport implementation.
+path additionally requires the user's direct-path choice. The audio adapter
+uses the existing protected call's authenticated/consented DATA capability.
+Direct call transport remains unimplemented. Policy tests alone do not
+establish encryption or transport implementation.
 
 ## Authenticated data connections
 
@@ -31,8 +35,15 @@ material and creates private credentials for that run. Native handles close
 before credential files. Startup removes abandoned sessions before allowing new
 work. Storage or cleanup failure is latched until an explicit successful retry.
 
-Every native transport socket binds to the captured non-VPN Android Network.
-DNS uses the same Network with a cancellable five-second request. An imported
+The default connection captures the application's system default Android Network,
+including an active VPN. Every native transport socket and the cancellable
+ten-second DNS request use that same Network. Android waits five seconds for a
+DNS server before asking the next, so the bound covers one server failover. Explicit physical-network choices
+are available only while an internet-capable application default exists without
+a VPN. Refreshing the network list hides physical choices while a VPN applies
+to Ito; Connect rechecks the current default and refuses a stale physical
+selection rather than replacing it. A change or loss of the captured default, or loss of the
+selected network's internet capability, ends the run without fallback. An imported
 numeric `endpoint.connect_address` retains its dial authority, while TLS and
 YTP still authenticate `endpoint.host` and the configured native identity.
 Adapter/control settings become empty because Ito opens public streams/packets
@@ -41,7 +52,8 @@ Services, suite, limits and credential authority remain the imported values.
 No device is attached, so the native endpoint makes one attempt. A failure or
 network loss stops that run. Reconnect requires another explicit Connect action.
 It never substitutes another configuration or a direct destination socket.
-Activity backgrounding stops data connections; rotation retains the process
+Activity backgrounding stops ordinary data connections. An already active
+foreground audio call retains its connection; rotation retains the process
 owner. Process restart restores explicit selection but does not auto-connect.
 
 Document reads admit one importer at a time, check regular-file type and bounded
@@ -59,6 +71,33 @@ These data probes are not calls or end-to-end media encryption.
 
 [Native integration](NATIVE.md) and [storage](SECRET_STORAGE.md) own the detailed
 build, JNI, cancellation, secret and recovery contracts.
+
+## Call screens
+
+The Calls tab reads the process-owned `CallBook` and `CallController` through
+`CallsModel`. Book changes run on the I/O dispatcher, and a refusal becomes a
+resource string. The screens create the identity, show the public contact
+code as text and a QR code with the complete fingerprint, add a contact from a
+typed or scanned code, verify it, replace a changed key and block a contact.
+Verification is the person's comparison of every fingerprint group, or an
+in-person scan whose key must equal the stored key. Either way the complete
+fingerprint goes to the core, which refuses a prefix. Only a verified contact
+offers Call, and only while the relay service is connected. Otherwise the
+contact's screen says to connect first. Copy and share exist only for the
+public contact code. A call the controller refuses before it starts reads
+"Call not started". Local history records only calls whose contact proved its
+identity, so only those can report that history was not saved. Byte counts
+and digests appear in Advanced mode.
+
+An initiator's invitation appears only as a QR code on a window with
+`FLAG_SECURE`. The invitation scanner's window is secure too. Scanning uses the framework
+Camera2 API and ZXing core, with no camera library. The camera permission is
+requested when a scan starts, the camera runs only while the scanner is on
+screen, and leaving the app ends the scan. A scanned text must be the
+canonical invitation or contact-code form before anything acts on it. The
+responder sees its consent prompt only after the core authenticated the
+contact. The end screen says "Declined by the contact" only for an attributed
+END. A peer END before its proof is reported as unattributed.
 
 ## Planned composition
 
@@ -81,8 +120,18 @@ The first [calling security contract](CALL_SECURITY.md) assigns local identity,
 contact trust, confidential one-use invitations and channel-bound peer proofs
 to Ito. Its [component decision](SECURITY_COMPONENT.md) selects a maintained
 native TLS record channel. The [relay contract](CALL_RELAY.md) specifies the
-separate authorized service ingress and opaque forwarding. The app's endpoint
-is not implemented, so these interfaces carry no app calls yet.
+separate authorized service ingress and opaque forwarding. The portable
+[call core](../native/call/README.md) implements the endpoint for the app and
+the Linux `ito-call` peer. `CallBook` owns the identity and contacts,
+`CallController` runs one attempt on the connected run's stream, and calls
+carry authenticated DATA. The portable [content codec](CONTENT_CHANNEL.md)
+adds bounded Opus/chat envelopes above that DATA channel. Android's
+[foreground audio adapter](VOICE.md) owns microphone/playback, codecs, focus
+and routes. [App lock](APP_LOCK.md) guards new secret access, and
+[local content](LOCAL_CONTENT.md) owns encrypted bounded messages/history.
+The call core owns buffered DATA/END processing across orderly input EOF and
+keeps application backpressure within the bounds in
+[calling security](CALL_SECURITY.md). This lifecycle policy stays above YUME.
 
 The call service joins two outbound client connections and forwards opaque
 bytes, which the endpoint will fill with encrypted media. It is separate
@@ -96,8 +145,9 @@ of a provider's account name or directory response.
 
 ## Weak connections and emergency audio
 
-The current Emergency setting is a preference only. The first media candidate
-is mono Opus speech with adaptive bandwidth, bitrate and packet duration.
+The current Emergency setting is a preference only. Normal foreground audio
+uses fixed mono Opus at 48 kHz, 20 ms and a requested 24 kbit/s codec payload.
+Adaptive bandwidth, bitrate and packet duration remain the separate I6 work.
 Evaluate roughly 6–8 kbit/s of codec payload for its emergency setting. That
 number excludes transport/authentication headers, feedback, redundancy,
 handshakes and link overhead. Do not advertise it as whole-link usage.

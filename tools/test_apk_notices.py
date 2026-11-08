@@ -30,7 +30,7 @@ class ApkNoticesTest(unittest.TestCase):
             "schema": 1, "artifacts": [{"coordinate": "example:library:1"}],
             "sourceComponents": [{"name": "example-native"}],
             "nativeLibraries": {f"lib/x86_64/{name}": hashlib.sha256(self.native).hexdigest()
-                                for name in ("libyume.so", "libc++_shared.so")},
+                                for name in ("libyume.so", "libitocall.so", "libc++_shared.so")},
             "files": {"LICENSE.txt": {"sha256": hashlib.sha256(self.text).hexdigest()}},
         }) + "\n")
         self.apk = self.root / "candidate.apk"
@@ -40,7 +40,7 @@ class ApkNoticesTest(unittest.TestCase):
         with zipfile.ZipFile(self.apk, "w") as archive:
             archive.writestr("classes.dex", b"synthetic fixture")
             if not omit_native:
-                for name in ("libyume.so", "libc++_shared.so"):
+                for name in ("libyume.so", "libitocall.so", "libc++_shared.so"):
                     archive.writestr("lib/x86_64/" + name, native if native is not None else self.native)
             if text is not None:
                 archive.writestr("assets/notices/manifest.json",

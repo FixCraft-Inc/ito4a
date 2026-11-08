@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Text used only by the provider-enabled build. The minimal build omits it. -->
+<resources>
+    <string name="provider_services">Provider</string>
+    <string name="connection_choose_first">Choose a server or import a configuration file to connect.</string>
+    <string name="provider_scope">Optional. A provider gives you access to its servers. It cannot change your identity, contacts or privacy settings.</string>
+    <string name="provider_add">Add provider</string>
+    <string name="provider_removed">Local provider data removed.</string>
+    <string name="provider_suspended">Access paused. Choose your server again to continue.</string>
+    <string name="provider_sign_in">Sign in</string>
+    <string name="provider_unregistered">Browser enrollment requires an explicit application registration.</string>
+    <string name="provider_busy">Working…</string>
+    <string name="provider_servers">Show servers</string>
+    <string name="provider_no_entitlement">Your account has no servers yet. Ask the provider for access.</string>
+    <string name="provider_replace_requires_remove">To change servers, remove this provider and sign in again.</string>
+    <string name="provider_provision">Provision selected server</string>
+    <string name="provider_identity">Transport identity: %1$s</string>
+    <string name="provider_select">Use this provider</string>
+    <string name="provider_remove">Remove provider</string>
+    <string name="provider_remove_notice">Remove local access for %1$s, even when offline. This stops its active connection. Account deletion and remote revocation are separate.</string>
+    <string name="provider_opening">Enter provider opening code</string>
+    <string name="provider_origin">Provider HTTPS origin</string>
+    <string name="provider_issuer">Accepted issuer HTTPS origin (optional)</string>
+    <string name="provider_consent">This provider grants access only to its infrastructure. Browser sign-in uses the issuer you accept here.</string>
+    <string name="provider_accept">I accept this provider and issuer.</string>
+    <string name="provider_suggested_title">Sign in to get a server</string>
+    <string name="provider_suggested_body">This app suggests %1$s. You sign in at %2$s in your browser, so Ito never sees your password.</string>
+    <string name="provider_continue">Continue</string>
+    <string name="provider_other">Use another provider</string>
+    <string name="provider_add_another">Add another provider</string>
+    <string name="provider_signed_out">Signed out</string>
+    <string name="provider_signed_in">Signed in</string>
+    <string name="provider_role_relay">Relay service for calls</string>
+    <string name="provider_sign_in_note">Opens %1$s in your browser. Your password stays there.</string>
+    <string name="provider_choose_server">Choose a server</string>
+    <string name="provider_refresh_servers">Refresh servers</string>
+    <string name="provider_access_until">Access until %1$s.</string>
+    <string name="provider_access_renew">Access ends at %1$s. Choose this server again to renew it.</string>
+    <string name="provider_access_ended">Access ended. Choose this server again to renew it.</string>
+    <string name="provider_location_unknown">Location not given</string>
+    <string name="provider_server_address">Connects to %1$s:%2$d. This is the server address, not proof of where traffic leaves.</string>
+    <string name="provider_issuer_detail">Sign-in: %1$s</string>
+    <string name="provider_origin_detail">Provider: %1$s</string>
+    <string name="provider_error_unauthorized">Sign in again to continue.</string>
+    <string name="provider_error_not_entitled">Your account does not include this server.</string>
+    <string name="provider_error_unavailable">The provider is unavailable. Try again later.</string>
+    <string name="provider_error_stale">The server list is out of date or this phone\'s time could not be confirmed. Check the date and time, then try again.</string>
+    <string name="provider_error_unsupported">This provider uses a sign-in that this version of Ito does not support.</string>
+    <string name="provider_error_cancelled">Cancelled.</string>
+    <string name="provider_error_storage">Ito could not read or save provider data on this phone.</string>
+    <string name="provider_error_rate_limited">Too many attempts. Wait a few minutes, then try again.</string>
+    <string name="provider_error_binding">The provider\'s details did not match. Remove it and add it again.</string>
+    <string name="provider_error_revoked">Access ended. Choose your server again.</string>
+    <string name="provider_error_timeout">Sign-in took too long. Try again.</string>
+    <string name="provider_error_conflict">Another change is still in progress. Try again shortly.</string>
+    <string name="provider_error_other">The provider refused the request (%1$s).</string>
+</resources>

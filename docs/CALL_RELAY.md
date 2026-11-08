@@ -172,5 +172,7 @@ coalesced framing, unknown/oversized requests, quotas, slow readers, queue
 exhaustion, reconnects within the rate window, restart, hangup, authority loss
 and cancellation races. Verify
 exact byte preservation and bounded cleanup. Opaque byte forwarding alone
-does not establish contact authentication or working calls. I4b separately
-qualifies the endpoint security composition, and I5 owns audio.
+does not establish contact authentication or working calls. The
+[call core](../native/call/README.md) implements the endpoint security
+composition. The Android [audio adapter](VOICE.md) owns foreground capture,
+codec and playback; relay forwarding alone does not qualify audio.

@@ -8,8 +8,14 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val providerFeatureEnabled = providers.gradleProperty("itoProviders").orElse("false").get().let {
+    require(it == "true" || it == "false") { "itoProviders must be true or false" }
+    it == "true"
+}
+
 val providerClientId = providers.gradleProperty("itoProviderClientId").orElse("").get()
 val providerCallback = providers.gradleProperty("itoProviderCallback").orElse("").get()
+require(providerFeatureEnabled || (providerClientId.isEmpty() && providerCallback.isEmpty())) { "Registration requires enabled providers" }
 require(providerClientId.isEmpty() == providerCallback.isEmpty()) { "Incomplete provider registration" }
 require(providerClientId.isEmpty() || Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}").matches(providerClientId))
 val callbackUri = providerCallback.takeIf { it.isNotEmpty() }?.let(URI::create)
@@ -17,6 +23,18 @@ require(callbackUri == null || (callbackUri.scheme == "https" && callbackUri.raw
     callbackUri.port == -1 && callbackUri.rawQuery == null && callbackUri.rawFragment == null &&
     callbackUri.rawPath == "/ito/oauth/callback" && callbackUri.host != null &&
     Regex("[a-z0-9.-]+").matches(callbackUri.host))) { "Invalid provider callback" }
+
+// A distribution may suggest one provider. The user still chooses it and sees
+// its origin, issuer and role before signing in. Source builds suggest none.
+val suggestedProvider = providers.gradleProperty("itoSuggestedProvider").orElse("").get()
+val suggestedIssuer = providers.gradleProperty("itoSuggestedIssuer").orElse("").get()
+val canonicalOrigin = Regex("https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
+require(suggestedProvider.isEmpty() || (providerFeatureEnabled && canonicalOrigin.matches(suggestedProvider))) {
+    "A suggested provider is a canonical HTTPS origin and requires enabled providers"
+}
+require(suggestedIssuer.isEmpty() || (suggestedProvider.isNotEmpty() && callbackUri != null && canonicalOrigin.matches(suggestedIssuer))) {
+    "A suggested issuer requires a suggested provider and a registered callback"
+}
 
 android {
     namespace = "com.fixcraft.ito"
@@ -27,6 +45,8 @@ android {
         applicationId = "com.fixcraft.ito"
         buildConfigField("String", "PROVIDER_CLIENT_ID", "\"$providerClientId\"")
         buildConfigField("String", "PROVIDER_CALLBACK", "\"$providerCallback\"")
+        buildConfigField("String", "SUGGESTED_PROVIDER", "\"$suggestedProvider\"")
+        buildConfigField("String", "SUGGESTED_ISSUER", "\"$suggestedIssuer\"")
         manifestPlaceholders["providerCallbackEnabled"] = (callbackUri != null).toString()
         manifestPlaceholders["providerCallbackHost"] = callbackUri?.host ?: "unregistered.invalid"
         minSdk = 28
@@ -34,11 +54,12 @@ android {
         versionCode = 1
         versionName = "0.1.0-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        testInstrumentationRunnerArguments["notAnnotation"] = "com.fixcraft.ito.transport.RequiresI1Fixture"
+        testInstrumentationRunnerArguments["notAnnotation"] = "com.fixcraft.ito.transport.RequiresI1Fixture,com.fixcraft.ito.call.RequiresI4bFixture"
         ndk { abiFilters += (providers.gradleProperty("itoAbi").orNull ?: "arm64-v8a,x86_64").split(',') }
         externalNativeBuild {
             ndkBuild {
                 arguments += "ITO_YUME_SHARED_ROOT=${layout.buildDirectory.dir("yume-shared-abi").get().asFile.absolutePath}"
+                arguments += "ITO_CALL_CORE_ROOT=${layout.buildDirectory.dir("ito-call-core").get().asFile.absolutePath}"
                 arguments += "APP_STL=c++_shared"
             }
         }
@@ -53,6 +74,23 @@ android {
         }
     }
     packaging { jniLibs { keepDebugSymbols += "**/*.so" } }
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDir(if (providerFeatureEnabled) "src/providers/java" else "src/minimal/java")
+            res.srcDir(if (providerFeatureEnabled) "src/providers/res" else "src/minimal/res")
+        }
+        if (providerFeatureEnabled) {
+            getByName("debug") {
+                manifest.srcFile("src/providersDebug/AndroidManifest.xml")
+                res.srcDir("src/providersDebug/res")
+            }
+            getByName("release").manifest.srcFile("src/providers/AndroidManifest.xml")
+            getByName("test").kotlin.srcDir("src/testProviders/java")
+            getByName("androidTest").kotlin.srcDir("src/androidTestProviders/java")
+        } else {
+            getByName("test").kotlin.srcDir("src/testMinimal/java")
+        }
+    }
     buildFeatures { compose = true; buildConfig = true }
     ndkVersion = "28.2.13676358"
     externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
@@ -63,7 +101,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":provider-library"))
+    if (providerFeatureEnabled) implementation(project(":provider-library"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
@@ -72,6 +110,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.zxing.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.json)
@@ -124,20 +163,44 @@ val buildYume by tasks.registering(Exec::class) {
     if (unverifiedSource) args += "--unverified-source"
     commandLine(args)
 }
+// The portable call core and its stock OpenSSL, built from the pinned archive
+// for each ABI. tools/build_call_core.sh checks the archive hash and the
+// library's exported surface and writes provenance.json.
+val openSslArchive = providers.gradleProperty("itoOpenSslArchive")
+    .getOrElse("${System.getProperty("user.home")}/.cache/ito/openssl-3.5.9.tar.gz")
+val buildCallCore by tasks.registering(Exec::class) {
+    val sdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: "/nonexistent-sdk"
+    val abis = providers.gradleProperty("itoAbi").orNull ?: "arm64-v8a,x86_64"
+    inputs.file(rootProject.file("tools/build_call_core.sh"))
+    inputs.file(rootProject.file("tools/security-component.json"))
+    inputs.dir(rootProject.file("native/call/src"))
+    inputs.dir(rootProject.file("native/call/include"))
+    inputs.file(rootProject.file("native/call/CMakeLists.txt"))
+    inputs.file(openSslArchive)
+    inputs.property("abis", abis)
+    outputs.dir(layout.buildDirectory.dir("ito-call-core"))
+    val args = mutableListOf("bash", rootProject.file("tools/build_call_core.sh").absolutePath,
+        "--ndk", "$sdk/ndk/28.2.13676358", "--openssl-archive", openSslArchive,
+        "--out", layout.buildDirectory.dir("ito-call-core").get().asFile.absolutePath, "--jobs", "4")
+    abis.split(',').forEach { args += listOf("--abi", it) }
+    commandLine(args)
+}
 afterEvaluate {
     tasks.matching { !it.name.contains("Clean") && (it.name.startsWith("externalNativeBuild") || it.name.contains("NdkBuild")) }
-        .configureEach { dependsOn(buildYume) }
+        .configureEach { dependsOn(buildYume, buildCallCore) }
 }
 
 abstract class GenerateItoDependencyNotices : DefaultTask() {
     @get:InputFile abstract val catalogFile: RegularFileProperty
     @get:InputFile abstract val generatorFile: RegularFileProperty
     @get:InputFile abstract val nativeProvenance: RegularFileProperty
+    @get:InputFile abstract val callProvenance: RegularFileProperty
     @get:InputFiles @get:PathSensitive(PathSensitivity.NONE)
     abstract val sourceFiles: ConfigurableFileCollection
     @get:InputFiles @get:PathSensitive(PathSensitivity.NONE)
     abstract val runtimeFiles: ConfigurableFileCollection
     @get:Input abstract val runtimeCoordinates: MapProperty<String, String>
+    @get:Input abstract val providersEnabled: Property<Boolean>
     @get:Input abstract val providerVersion: Property<String>
     @get:Input abstract val providerSourceSha256: Property<String>
     @get:Internal abstract val checkoutDirectory: DirectoryProperty
@@ -149,7 +212,9 @@ abstract class GenerateItoDependencyNotices : DefaultTask() {
         val resolved = runtimeFiles.files.sortedBy { coordinates.getValue(it.absolutePath) }
             .map { mapOf("coordinate" to coordinates.getValue(it.absolutePath), "path" to it.absolutePath) }
         val inventory = temporaryDir.resolve("runtime.json")
-        inventory.writeText(JsonOutput.toJson(mapOf("artifacts" to resolved, "providerIdentity" to mapOf("version" to providerVersion.get(), "source_sha256" to providerSourceSha256.get()))) + "\n")
+        val metadata = mutableMapOf<String, Any>("artifacts" to resolved, "providersEnabled" to providersEnabled.get())
+        if (providersEnabled.get()) metadata["providerIdentity"] = mapOf("version" to providerVersion.get(), "source_sha256" to providerSourceSha256.get())
+        inventory.writeText(JsonOutput.toJson(metadata) + "\n")
         val generatorLog = temporaryDir.resolve("generator.log")
         val process = ProcessBuilder("python3", generatorFile.get().asFile.absolutePath,
             "--root", checkoutDirectory.get().asFile.absolutePath,
@@ -157,6 +222,7 @@ abstract class GenerateItoDependencyNotices : DefaultTask() {
             "--catalog", catalogFile.get().asFile.absolutePath,
             "--artifacts", inventory.absolutePath,
             "--native-provenance", nativeProvenance.get().asFile.absolutePath,
+            "--call-provenance", callProvenance.get().asFile.absolutePath,
             "--output", outputDirectory.get().asFile.absolutePath)
             .redirectErrorStream(true).redirectOutput(generatorLog).start()
         if (!process.waitFor(120, TimeUnit.SECONDS)) {
@@ -175,14 +241,15 @@ androidComponents.onVariants { variant ->
         componentFilter { it is ModuleComponentIdentifier }
     }.artifacts.artifacts }
     val providerVariant = if (variant.buildType == "debug") "debug" else "release"
-    val providerProject = project(":provider-library")
-    val providerAar = providerProject.layout.buildDirectory.file("outputs/aar/provider-library-$providerVariant.aar")
+    val providerAar = if (providerFeatureEnabled) project(":provider-library").layout.buildDirectory.file("outputs/aar/provider-library-$providerVariant.aar") else null
     val notices = tasks.register<GenerateItoDependencyNotices>(
         "generate${variant.name.replaceFirstChar(Char::uppercase)}DependencyNotices") {
-        dependsOn(buildYume, ":provider-library:bundle${providerVariant.replaceFirstChar(Char::uppercase)}Aar")
+        dependsOn(buildYume, buildCallCore)
+        if (providerFeatureEnabled) dependsOn(":provider-library:bundle${providerVariant.replaceFirstChar(Char::uppercase)}Aar")
         catalogFile.set(rootProject.layout.projectDirectory.file("notices/catalog.json"))
         generatorFile.set(rootProject.layout.projectDirectory.file("tools/generate_notices.py"))
         nativeProvenance.set(layout.buildDirectory.file("yume-shared-abi/provenance.json"))
+        callProvenance.set(layout.buildDirectory.file("ito-call-core/provenance.json"))
         checkoutDirectory.set(rootProject.layout.projectDirectory)
         nativeSourceDirectory.set(yumeRoot)
         sourceFiles.from(rootProject.fileTree("notices/texts"), rootProject.file("LICENSE"),
@@ -192,18 +259,21 @@ androidComponents.onVariants { variant ->
                 include("ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/**/libc++_shared.so")
             },
             fileTree(layout.buildDirectory.dir("yume-shared-abi")) { include("*/libyume.so") },
+            fileTree(layout.buildDirectory.dir("ito-call-core")) { include("*/libitocall.so") },
             yumeRoot.resolve("config/dependencies.json"), yumeRoot.resolve("vcpkg.json"),
             yumeRoot.resolve("scripts/ensure-openssl.sh"),
             yumeRoot.resolve("tools/build_android_shared_abi.sh"),
             yumeRoot.resolve("third_party/nlohmann_json/PROVENANCE.md"))
-        runtimeFiles.from(resolved.map { entries -> entries.map { it.file } }, providerAar)
-        providerVersion.set(providers.gradleProperty("yumeProviderVersion"))
-        providerSourceSha256.set(providers.gradleProperty("yumeProviderSourceSha256"))
+        runtimeFiles.from(resolved.map { entries -> entries.map { it.file } })
+        if (providerAar != null) runtimeFiles.from(providerAar)
+        this.providersEnabled.set(providerFeatureEnabled)
+        providerVersion.set(if (providerFeatureEnabled) providers.gradleProperty("yumeProviderVersion") else providers.provider { "" })
+        providerSourceSha256.set(if (providerFeatureEnabled) providers.gradleProperty("yumeProviderSourceSha256") else providers.provider { "" })
         runtimeCoordinates.set(resolved.map { entries ->
             val pairs = (entries.map {
                 val id = it.id.componentIdentifier as ModuleComponentIdentifier
                 it.file.absolutePath to "${id.group}:${id.module}:${id.version}"
-            } + (providerAar.get().asFile.absolutePath to "com.fixcraft.yume:provider-library:${providers.gradleProperty("yumeProviderVersion").get()}")).distinct()
+            } + (providerAar?.let { listOf(it.get().asFile.absolutePath to "com.fixcraft.yume:provider-library:${providers.gradleProperty("yumeProviderVersion").get()}") } ?: emptyList())).distinct()
             check(pairs.map { it.first }.distinct().size == pairs.size) { "Ambiguous runtime artifact path" }
             pairs.toMap()
         })

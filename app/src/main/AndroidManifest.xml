@@ -3,13 +3,16 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="https" />
-        </intent>
-    </queries>
+    <!-- Requested only when a person starts scanning a QR code. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <application
         android:name=".ItoApplication"
         android:allowBackup="false"
@@ -20,18 +23,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Ito"
         android:usesCleartextTraffic="false">
-        <activity android:name="com.fixcraft.yume.provider.ProviderCallbackActivity"
-            tools:ignore="AppLinkUrlError"
-            android:exported="${providerCallbackEnabled}" android:noHistory="true"
-            android:excludeFromRecents="true" android:theme="@android:style/Theme.NoDisplay">
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="${providerCallbackHost}"
-                    android:path="/ito/oauth/callback" />
-            </intent-filter>
-        </activity>
+        <service android:name=".call.CallAudioService" android:exported="false"
+            android:foregroundServiceType="microphone" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

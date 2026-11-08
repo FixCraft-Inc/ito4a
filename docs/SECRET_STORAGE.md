@@ -167,3 +167,54 @@ preserves the thread's interrupt after cleanup. Process death may leave private
 staging until startup recovery. Provider-native or storage failure cannot choose
 a different server, manual configuration, provider or direct path. Account/API
 deadlines and transport-lease deadlines remain separate shared-library owners.
+
+## Call identity storage
+
+`IdentityStore` seals the call core's snapshot of the local identity, its
+contacts and spent invitations in `noBackupFilesDir/ito-identity/snapshot.bin`.
+It also retains the call core's admitted clock floor. Clock admission can
+publish this checkpoint even if the subsequent invitation operation fails.
+It does not change identity, contacts or spent records. No pending invitation
+PSK or monotonic deadline is restored from this snapshot. The exact clock
+rules and observation limits are in [calling security](CALL_SECURITY.md).
+The core owns the plaintext format and every trust and replay rule. The store
+owns only sealing, publication and refusal. A separate non-exportable
+AES-256 Keystore key, `ito.identity.v1`, encrypts it with GCM, a fresh
+platform nonce and a 128-bit tag. The format version, the domain
+`ito/identity-storage/1` and the record name are authenticated data. The
+Ed25519 seed itself is not hardware held: the core reads it from the
+decrypted snapshot while it signs.
+
+A publication authenticates the existing snapshot first, writes a private
+temporary file, syncs it, renames it over the snapshot and syncs the
+directory. A failure before the rename leaves the old snapshot and reports
+not committed. A failure after it is ambiguous, and the core then refuses
+further changes until the store is reopened. The contact book then shows the
+storage failure instead of its last state. Opening the book again reopens
+the durable snapshot once no call still uses the store. Startup removes only
+the named
+temporary file. Corrupt or unauthenticated ciphertext is never replaced, and
+a missing key is never recreated while ciphertext exists. The app shows the
+failure and offers no reset. Recovery means clearing the app's data and
+creating a new identity that contacts verify again.
+
+The snapshot is excluded from backups with the rest of `noBackupFilesDir`.
+It is independent of manual configurations, provider records and transport
+keys, so removing a provider or a configuration keeps identity and contacts.
+Plaintext copies in Kotlin are wiped after sealing. JVM and flash erasure
+remain best effort.
+
+The optional [application lock](APP_LOCK.md) gates new identity-store access
+and native book operations. Its authenticated proof does not replace or
+reconfigure `ito.identity.v1`. Existing authorized call borrowers may finish
+while locked, and no new identity/contact mutation is allowed. Communication
+messages and history use the independent [local-content store](LOCAL_CONTENT.md),
+whose random encryption key is wrapped by the application-access owner.
+
+An invitation never enters this store's plaintext as a persisted secret
+beyond the core's spent record. The controller holds the initiator's signed
+invitation while the secure QR screen shows it, and wipes the bytes when the
+handshake starts, the attempt ends or the screen is dismissed. The QR text and
+a scanned text are JVM strings and cannot be wiped. The scanner's luminance
+copy is wiped when the camera closes. Navigation state saves only public
+contact codes, never an invitation.

@@ -54,9 +54,20 @@ The application serializes data calls and all handle replacement.
 
 No device is attached. The public ABI therefore makes exactly one attempt
 per start and does not retry after session loss. Kotlin owns explicit
-reconnect and network selection. It resolves the selected server through
-that Android `Network` and binds every native socket through the captured
-`SocketBinder`. The callback retains its Java object until endpoint
+reconnect and network selection. The default selection captures the application's
+system default `Network`, including a VPN, for both DNS and sockets. Explicit
+physical-network selection requires an internet-capable application default
+without a VPN; a stale or unavailable selection is refused without choosing
+another route. A split-tunnel VPN excluding Ito is not the application's default.
+The owner observes both the selected Network and the system default. A default
+replacement or loss, loss of internet capability, or a blocked selected/default
+Network requests Stop. It latches that request before the Main owner joins native
+borrowers, destroys the handle and reports `NetworkLost`. Registration precedes
+DNS, and route checks run before DNS, native start and each socket binding. Those
+checks and callbacks observe Android's changes; they are not an atomic lock on
+system routing. A new route always requires another explicit Connect action.
+The owner resolves the selected server through that captured Network and binds
+every native socket through the `SocketBinder`. The callback retains its Java object until endpoint
 destruction drains all native workers. Binding refusal or a callback exception
 fails closed without selecting another network. This connection owner requires
 Android 10 (API 29) for bounded DNS, including its numeric-address path. On
@@ -93,3 +104,80 @@ private-key-derived local identity against the selected grant before endpoint
 creation, checks the captured permit during startup and data use, and stops
 its exact run when authority ends. The native handle is destroyed before the
 staging session and permit are closed. See [provider ownership](PROVIDERS.md).
+
+## Call core
+
+The [call core](../native/call/README.md) is a separate library,
+`libitocall.so`, with stock OpenSSL 3.5.9 linked inside it and hidden. Gradle's
+`buildCallCore` task runs `tools/build_call_core.sh`, which checks the pinned
+OpenSSL archive against `tools/security-component.json`, builds OpenSSL and
+the core for each selected ABI with NDK 28.2.13676358, refuses a library that
+exports anything but the C interface or imports an OpenSSL symbol, and records
+the archive, sources and libraries in `provenance.json`. `-PitoOpenSslArchive`
+names the archive, by default `~/.cache/ito/openssl-3.5.9.tar.gz`.
+`app/src/main/jni/Android.mk` packages it beside `libyume.so`, and
+`libitojni.so` links both. The notice generator binds `libitocall.so` by that
+provenance, and a changed OpenSSL archive requires a catalog review.
+
+`app/src/main/cpp/ito_call_jni.cpp` adapts the C interface to
+`com.fixcraft.ito.call.CallNative`. Core statuses become values where Kotlin
+expects them (backpressure, no data, no invitation yet) and otherwise
+`CallFailure(code, operation)` with a fixed operation name. Its
+clock refusal retains `CLOCK_REGRESSED` through JNI and the call outcome's
+resource string. Invitation opening and both call constructors refuse negative
+JVM Unix-second inputs before unsigned conversion. Those paths use the core's
+one clock admission owner, rather than implementing clock policy in Kotlin. Its
+`liveHandles` counts the core contexts, stores, invitations and calls Kotlin
+owns, for lifecycle qualification. The persistence
+callback calls Kotlin on the thread that mutates the store. A call borrows a
+named-service stream from a connected run through `ItoNative.openCallStream`,
+whose verified server fingerprint and service are the call's relay
+authority. `ConnectionController.serveCall` runs the attempt on the run's
+worker, serialized with data probes, and closes the stream only after the
+call is destroyed. Closing attempts to drain accepted writes and half-close
+within five seconds, then closes immediately. A failed or timed-out shutdown
+can leave pending writes that the close aborts.
+The portable call owner retains bounded buffered TLS/frame input across orderly
+read EOF while application reads release backpressure. It keeps the original
+deadlines and immediate error/cancellation paths. EOF alone cannot supply an
+authenticated END; [calling security](CALL_SECURITY.md) owns that distinction.
+Stopping the run, losing its Network or its provider authority ends the
+stream and so the call. A lane the run never serves, because it stopped first
+or its authority failed, is refused rather than left waiting. The adapter
+finds `CallFailure`, `ContactRecord`, `CallStatus` and the persistence
+interface by name, so `app/proguard-rules.pro` keeps them in minified builds.
+
+Cancellation while `openCallStream` is blocked ends the waiting attempt. If
+the native open later succeeds, the run closes that stream without invoking
+the canceled lane. Dismissing the ended attempt must keep its view idle when
+that late stream arrives.
+
+`CallOpeningTest` exercises this schedule through real JNI and the public
+libyume ABI. It is an opt-in `RequiresI4bFixture` test, enabled with the
+instrumentation argument `i4bOpening=true` and the fixture exclusion cleared.
+The target app's `no_backup/opening-fixture/client/` holds a generated client
+configuration and its referenced files; `control.json` beside it names the
+host control port. The authenticated host server registers `ito-call` and
+withholds public stream acceptance. On each `accept` control line it accepts
+one stream, requires EOF with zero application bytes, and replies `eof`.
+The test sends `done` after its lane and application-owner cases. It observes
+the blocking native call before cancellation, then checks callback, call-view
+and adapter-handle outcomes. These handle counts do not measure all native or
+platform resources, and this fixture does not establish call creation or
+invitation-secret cleanup.
+
+`CallAuthorityTest` is a separate opt-in `RequiresI4bFixture` fixture, enabled
+with `i4bAuthority=true` and the fixture exclusion cleared. The target app's
+`no_backup/authority-fixture/client/` contains a generated authenticated client
+kit. A public-ABI host registers `ito-call`, answers RESERVE and JOIN, then
+holds the call at WAITING. The test seeds a synthetic local enrollment through
+the shared ProviderStore; it does not qualify network enrollment or OAuth.
+It uses the real ServiceController permit, ConnectionController, CallController,
+JNI and call core to exercise provider removal, joint wall/elapsed expiry,
+and selected Wi-Fi loss through the framework's actual `Network.onLost`.
+It checks typed connection/call termination, invitation withdrawal and zeroing,
+no manual fallback, and exact native-handle baselines after call dismissal.
+The application-owned call book remains open until process stop. These counts
+do not measure all descriptors, heap or platform resources, and a WAITING call
+does not establish peer authentication, MediaAuthorized or audio. The Wi-Fi
+case restores Wi-Fi and awaits the framework callback during cleanup.

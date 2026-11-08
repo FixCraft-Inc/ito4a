@@ -5,9 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.fixcraft.ito.data.InvalidPreferences
 import com.fixcraft.ito.data.PreferencesStore
-import com.fixcraft.ito.domain.AudioPreference
 import com.fixcraft.ito.domain.Preferences
-import com.fixcraft.ito.domain.RoutingPreference
+import com.fixcraft.ito.domain.Presentation
 import com.fixcraft.ito.domain.SavedService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,9 +47,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setRouting(value: RoutingPreference) = update { it.copy(routing = value) }
+    // Routing and audio preferences stay in the stored schema with their
+    // defaults. Settings expose them again when direct calls and lower-data
+    // audio exist, so nothing here can change them today.
 
-    fun setAudio(value: AudioPreference) = update { it.copy(audio = value) }
+    fun setPresentation(value: Presentation) = update { it.copy(presentation = value) }
 
     fun addService(service: SavedService) = update { current ->
         when {

@@ -2,11 +2,15 @@
 #include <jni.h>
 #include <yume/yume.h>
 
+#include "call_stream.hpp"
+
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <new>
@@ -386,7 +390,11 @@ yume_open_options open_options(const std::string& service, jint kind,
     options.destination.struct_size = sizeof(options.destination);
     options.destination.abi_version = YUME_ABI_VERSION;
     options.destination.kind = static_cast<std::uint32_t>(destination_kind);
-    options.destination.host = {destination.data(), destination.size()};
+    // libyume refuses a NONE destination whose host view has any pointer,
+    // and an empty std::string's data() is not null.
+    if (destination_kind != YUME_DESTINATION_NONE) {
+        options.destination.host = {destination.data(), destination.size()};
+    }
     options.destination.port = static_cast<std::uint16_t>(port);
     return options;
 }
@@ -728,6 +736,91 @@ Java_com_fixcraft_ito_transport_nativebridge_ItoNative_packetEcho(
                 : YUME_STATUS_IO_ERROR,
             "packet-read-count");
         return echo_result(env, output, peer);
+    });
+}
+
+namespace {
+
+// A named-service stream lent to the call core for one call attempt.
+struct CallStream final {
+    Stream stream;
+    std::array<std::uint8_t, 32> fingerprint{};
+};
+
+CallStream& call_stream_owner(jlong handle) {
+    require(handle != 0, "call-stream-handle");
+    return *reinterpret_cast<CallStream*>(static_cast<std::uintptr_t>(handle));
+}
+
+}  // namespace
+
+yume_stream* ito::jni::call_stream(jlong handle) noexcept {
+    if (handle == 0) return nullptr;
+    return reinterpret_cast<CallStream*>(static_cast<std::uintptr_t>(handle))
+        ->stream.get();
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_fixcraft_ito_transport_nativebridge_ItoNative_openCallStream(
+    JNIEnv* env, jobject, jlong handle, jstring service_name) {
+    return guarded(env, [&]() -> jlong {
+        const auto service = text(env, service_name, YUME_MAX_SERVICE_NAME);
+        const auto options = open_options(service, YUME_SERVICE_BYTE_STREAM,
+                                          YUME_DESTINATION_NONE, "", 0);
+        yume_stream* raw = nullptr;
+        require_ok(yume_endpoint_open_stream(session(handle).endpoint.get(),
+                                             &options, 10'000U, &raw),
+                   "call-stream-open");
+        ++g_owners[5];
+        // Owned before anything else can throw.
+        Stream stream(raw);
+        auto owner = std::make_unique<CallStream>();
+        owner->stream = std::move(stream);
+        yume_peer_identity peer{};
+        peer.struct_size = sizeof(peer);
+        peer.abi_version = YUME_ABI_VERSION;
+        require_ok(yume_stream_get_peer_identity(owner->stream.get(), &peer,
+                                                 sizeof(peer)),
+                   "call-stream-peer");
+        require_server(peer);
+        // The call's relay authority is this stream's verified server and
+        // exact service, never a configured label.
+        require(std::string(peer.service) == service, "call-stream-service");
+        std::copy(std::begin(peer.composite_fingerprint_sha256),
+                  std::end(peer.composite_fingerprint_sha256),
+                  owner->fingerprint.begin());
+        return static_cast<jlong>(
+            reinterpret_cast<std::uintptr_t>(owner.release()));
+    });
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_fixcraft_ito_transport_nativebridge_ItoNative_callStreamFingerprint(
+    JNIEnv* env, jobject, jlong handle) {
+    return guarded(env, [&]() -> jbyteArray {
+        const auto& fingerprint = call_stream_owner(handle).fingerprint;
+        jbyteArray result = env->NewByteArray(32);
+        require_java(env, result);
+        env->SetByteArrayRegion(
+            result, 0, 32, reinterpret_cast<const jbyte*>(fingerprint.data()));
+        if (env->ExceptionCheck()) {
+            env->DeleteLocalRef(result);
+            throw JavaException{};
+        }
+        return result;
+    });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_fixcraft_ito_transport_nativebridge_ItoNative_closeCallStream(
+    JNIEnv* env, jobject, jlong handle) {
+    guarded(env, [&]() {
+        std::unique_ptr<CallStream> owner(&call_stream_owner(handle));
+        // Try to drain accepted writes and half-close within five seconds.
+        // Close is immediate even if shutdown fails or times out, so pending
+        // writes can be aborted.
+        (void)yume_stream_shutdown_write(owner->stream.get(), 5000U);
+        (void)yume_stream_close(owner->stream.get(), 0U);
     });
 }
 

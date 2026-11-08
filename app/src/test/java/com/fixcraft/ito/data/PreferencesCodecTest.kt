@@ -2,6 +2,7 @@ package com.fixcraft.ito.data
 
 import com.fixcraft.ito.domain.AudioPreference
 import com.fixcraft.ito.domain.Preferences
+import com.fixcraft.ito.domain.Presentation
 import com.fixcraft.ito.domain.RoutingPreference
 import com.fixcraft.ito.domain.SavedService
 import com.fixcraft.ito.domain.ServiceOrigin
@@ -39,8 +40,9 @@ class PreferencesCodecTest {
 
     @Test fun rejectsWrongTypesUnknownFieldsAndUnknownSchemas() {
         for (mutation in listOf<(JSONObject) -> Unit>(
-            { it.put("schema", "1") }, { it.put("schema", 2) }, { it.put("routing", true) },
-            { it.put("enable_plaintext", true) }, { it.remove("audio") },
+            { it.put("schema", "2") }, { it.put("schema", 3) }, { it.put("routing", true) },
+            { it.put("enable_plaintext", true) }, { it.remove("audio") }, { it.remove("presentation") },
+            { it.put("presentation", "Expert") }, { it.put("schema", 1) },
         )) {
             val json = JSONObject(PreferencesCodec.encode(Preferences()))
             mutation(json)
@@ -56,6 +58,19 @@ class PreferencesCodecTest {
         services.remove(1)
         services.getJSONObject(0).put("origin", "https://user:password@provider.example")
         assertThrows(InvalidPreferences::class.java) { PreferencesCodec.decode(json.toString()) }
+    }
+
+    @Test fun schemaOneReadsAsSimpleAndAdvancedChangesNoPolicy() {
+        val schemaOne = JSONObject(PreferencesCodec.encode(Preferences(services = listOf(service())))).put("schema", 1)
+        schemaOne.remove("presentation")
+        val upgraded = PreferencesCodec.decode(schemaOne.toString())
+        assertEquals(Presentation.Simple, upgraded.presentation)
+        assertEquals(listOf(service()), upgraded.services)
+        val advanced = PreferencesCodec.decode(PreferencesCodec.encode(upgraded.copy(presentation = Presentation.Advanced)))
+        assertEquals(Presentation.Advanced, advanced.presentation)
+        assertEquals(RoutingPreference.ProtectedOnly, advanced.routing)
+        assertEquals(upgraded.audio, advanced.audio)
+        assertEquals(2, JSONObject(PreferencesCodec.encode(advanced)).getInt("schema"))
     }
 
     @Test fun removingAServicePreservesPrivacyAndAudioPreferences() {

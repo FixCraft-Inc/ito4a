@@ -1,11 +1,12 @@
 # Authenticated calling and identity, version 1
 
 This is the implementation contract for Ito's first two-party call data path.
-The application currently provides authenticated transport data probes and
-provider enrollment. Calling, contacts, this identity store and end-to-end
-security are not implemented. The [component decision](SECURITY_COMPONENT.md)
-defines the selected native dependency and the bounded evaluation. The
-[relay contract](CALL_RELAY.md) defines the separate service.
+The portable [call core](../native/call/README.md) implements it for the
+Android app and the Linux `ito-call` endpoint. Profile 1 carries diagnostic
+test DATA; profile 2 binds the [audio/chat content contract](CONTENT_CHANNEL.md).
+The Android [audio adapter](VOICE.md) owns capture/playback and codecs. The
+[component decision](SECURITY_COMPONENT.md) defines the selected native
+dependency. The [relay contract](CALL_RELAY.md) defines the separate service.
 
 ## Trust and owners
 
@@ -110,7 +111,7 @@ fields are mandatory, with no extensions, duplicates or trailing bytes:
 | Relay fingerprint, named service | 32, then u16 length + ASCII bytes |
 | Recipient room token | 32, supplied by relay for responder role |
 | Issued-at, expires-at | u64 Unix seconds each, lifetime 1..600 seconds |
-| Capability offer | u16 value 1, the exact version-1 profile below |
+| Capability offer | u16 value 1 (diagnostic DATA) or 2 (content envelope 1), as defined below |
 | Invitation PSK | 32, generated locally and never sent to the relay |
 | Initiator signature | 64, Ed25519 over every preceding byte |
 
@@ -122,6 +123,47 @@ grace, plus `1 <= expires_at - issued_at <= 600`. Check arithmetic before
 subtraction/addition. The establishment deadline is capped by remaining invitation lifetime,
 using monotonic time. A clock rollback or uncertain restored deadline refuses
 the attempt. The relay applies its independent reservation deadline.
+
+The store owns clock admission. A new platform Unix-second observation must
+be at least the durable clock floor and the live accepted observation advanced
+by whole elapsed monotonic seconds. Repeated equal samples cannot restart that
+elapsed interval. A backward monotonic observation refuses admission
+with `CLOCK_REGRESSED`. Check this before signing or using an invitation PSK,
+spending, or JOIN. Both call roles and invitation opening use the same rule.
+Detected uncertainty is recorded durably, so reaching the old floor, correcting
+the displayed clock or reopening the store does not silently clear it. A
+legitimate backward correction can therefore leave new calls refused. Safe
+recovery needs a separately designed source of time confidence and is not
+implemented. Identity, contact trust and replay records remain intact. Do not
+clear app data or recreate the identity as clock recovery.
+
+Admission checkpoints the accepted clock floor independently of the invitation
+operation. A later allocation, capacity or busy refusal may therefore leave a
+new clock checkpoint, but cannot create a spent record, change identity/trust,
+publish a partial handle or consume the caller's invitation. A refused clock
+checkpoint publishes no handle. A not-committed persistence failure keeps the
+old snapshot. Detected uncertainty is latched in memory before its checkpoint
+can allocate or fail. Later admission retries that checkpoint, and every later
+successful store mutation preserves it. If the process dies before any
+uncertainty checkpoint succeeds, durability of that observation is not
+established. An ambiguous failure latches further admission and mutation until
+reopening the durable snapshot.
+
+An admitted attempt retains its wall/monotonic anchor. Its conservative rounded-up
+time is used for signing and expiry, while only its whole-second lower bound
+can advance the durable floor or prune replay records. This projection is not
+a new wall observation. A responder's handoff keeps the original opened
+invitation's monotonic deadline and can only shorten it, never extend it by
+reanchoring wall time. A backward monotonic handoff refuses the attempt.
+
+No pending invitation, PSK or monotonic deadline is restored from the identity
+snapshot. Reopening retains the durable clock floor, and a serialized invitation
+must undergo fresh admission and validation. The floor is a refusal bound, not
+proof of actual current time. A clock change entirely between observations,
+including while the process is stopped, cannot be detected if the next sample
+still satisfies the recorded bounds. There is no independent trusted-time
+source. Do not infer real-time expiry certification from these local checks or
+recover by replacing identity, clearing replay state or reusing an old room.
 
 An installation retains at most eight pending invitations. Before first JOIN,
 atomically mark the invitation ID spent in the authenticated identity store
@@ -138,8 +180,10 @@ must not evict valid state. Remote teardown cannot revoke a peer's saved copy,
 so both endpoints enforce these rules independently.
 
 Protected routing remains the default and is the only version-1 call route.
-Bind all transport sockets/DNS to the captured underlying Android Network.
-Provider authority loss, backgrounding, selected-network loss or native failure
+Bind all transport sockets/DNS to the captured Android Network. The default
+selection follows the application's system default, including a VPN. Explicit
+physical selection must not bypass a VPN applying to Ito's default route. Provider authority loss,
+ordinary data/test backgrounding, default-network change/loss, selected-network loss or native failure
 ends the attempt. Preserve the existing no-fallback policy. A future direct
 route requires separate user consent before address-disclosing candidate
 gathering and a separately qualified contract. Audio preference and Emergency
@@ -172,8 +216,9 @@ verify a contact. After it completes, both sides derive the 32-byte RFC 9266
 `tls-exporter` channel binding with label `EXPORTER-Channel-Binding`, empty
 context and `use_context=1`. Neither side sends early application data.
 
-The initiator sends OFFER containing u16 profile 1. The responder accepts only
-that value and sends SELECT containing u16 profile 1. No capability is inferred
+The initiator sends OFFER containing the signed invitation's u16 profile.
+The responder accepts only that exact value and sends SELECT containing the
+same value. The initiator also refuses a different SELECT. No capability is inferred
 from an absent field. The context hash is SHA-256 of ASCII `ito/call-context/1`,
 zero, invitation hash (32), room ID (32), initiator key (32), responder key (32),
 relay fingerprint (32), u16 service length + exact service bytes, exact OFFER
@@ -202,8 +247,13 @@ cannot publish it.
 Profile 1 means this exact security/authentication protocol, one peer, the
 protected ordered stream, and bounded opaque test payloads for the later
 endpoint gate. It does not select a codec, packet duration or audio mode.
-Adding audio capabilities requires the I5 contract and a new explicit profile,
-with both controlled readers/writers updated. Unknown or unsupported values
+Profile 2 keeps that security construction and explicitly selects content
+envelope 1 with fixed mono Opus capabilities and bounded synchronous chat.
+Its signed invitation and OFFER/SELECT bind profile 2 before contact consent.
+The Android application requests and accepts profile 2; the diagnostic Linux
+CLI continues profile 1. There is no downgrade between them. The C API's
+`ito_call_create_initiator_profile` selects 1 or 2 explicitly; the existing
+diagnostic entry point selects 1. Unknown or unsupported values
 fail without a fallback. Product, TLS, call protocol, profile, YTP, relay module
 and native ABI versions are independent.
 
@@ -220,8 +270,8 @@ rejects peer-originated replay of authenticated application messages.
 
 | Type | Payload and allowed position |
 | --- | --- |
-| 1 OFFER | Initiator only, first frame, exactly u16 profile 1 |
-| 2 SELECT | Responder only, first frame, exactly u16 profile 1 |
+| 1 OFFER | Initiator only, first frame, exactly the signed u16 profile (1 or 2) |
+| 2 SELECT | Responder only, first frame, exactly that same u16 profile |
 | 3 AUTH | Exactly 64-byte signature, after OFFER/SELECT, initiator first |
 | 4 ACCEPT | Exactly 32-byte confirmation, both AUTHs verified, initiator first |
 | 5 DATA | 1..16384 opaque bytes, MediaAuthorized only |
@@ -233,6 +283,17 @@ authenticated channel statements, not proof of a local cause. Before peer AUTH
 verification, END proves only invitation-PSK possession and terminates without
 attributing a decline/cancellation to the contact. Pre-TLS errors carry no
 authenticated contact status. No human error string drives policy.
+
+Orderly transport input EOF does not discard accepted TLS/frame input merely
+because application receive backpressure deferred parsing. The call owner stops
+network reads and outgoing application work, retains the bounded input, and
+resumes parsing as application reads free receive space. Cancellation, authority
+or contact loss, clock refusal and the original deadlines still take precedence;
+waiting for application reads cannot extend them. Transport errors and failed
+writes terminate immediately. Only a parsed END supplies a remote reason and
+its attribution. Needing further input at EOF fails the incomplete exchange.
+TLS close_notify without END ends the peer without a reason or contact
+attribution; a partial application frame is a protocol failure.
 
 Local states are Idle, Preparing, Joined, Handshaking, Authenticating,
 AwaitingAcceptance, MediaAuthorized, Closing and Closed. Each transition
@@ -248,7 +309,7 @@ credentials. Contain exceptions at JNI, callbacks and worker entry points.
 
 One active attempt is allowed per installation. TLS handshake has a 10-second
 wall budget, 256 KiB total inbound bytes, 64 KiB pending BIO output, and at
-most one HelloRetryRequest (a second is a TLS protocol failure). From TLS
+most one HelloRetryRequest (a second terminates with typed `ProtocolFailure`). From TLS
 completion through bilateral ACCEPT, both endpoints allow one absolute
 40-second authentication/consent budget. The responder's local decision uses
 at most 30 seconds within it. All establishment budgets are capped by invitation
@@ -285,6 +346,79 @@ and denial but still cannot replace a pinned contact without its signing key.
 The invitation recipient learns its contents. Ordered TCP loss recovery may
 stall speech. This design makes no low-bandwidth, audio quality, background
 delivery, anonymous-routing or working-call claim.
+
+## Implementation details
+
+The call core settles these details the sections above leave open:
+
+- The store snapshot is the core's own canonical encoding, with the domain
+  `ito/identity-snapshot/1`. It holds the identity seed and public key,
+  contacts in key order and spent invitations in ID order. Opening refuses
+  any malformed, reordered or inconsistent snapshot, including a public key
+  the seed does not derive, and never resets it.
+- The snapshot's u64 clock field holds the admitted lower bound, or the reserved
+  value `UINT64_MAX` for detected uncertainty. It is not a usable wall timestamp.
+  New wall observations and projected times reaching that value are refused
+  before publication or arithmetic. The sentinel keeps the existing snapshot
+  layout and identity/trust/replay bytes intact. It is never used for pruning,
+  time projection or automatic recovery.
+- Both roles record a spent invitation, with its role, before their first
+  JOIN. The initiator signs and spends after RESERVED, because the room and
+  the responder token come from it. Its lifetime is the requested one or the
+  granted reservation in whole seconds, whichever is shorter.
+- Pruning removes records only after expiry plus 60 seconds, using an admitted
+  attempt's lower clock bound when it reaches the latest durable observation.
+  A rounded expiry clock never advances pruning. Pruning a received
+  record raises a floor: a received invitation that expires at or before it
+  is refused, because it may replay a pruned one.
+- Eight pending invitations and attempts share one bound per store.
+- After END the sender also sends close_notify. It then keeps reading its
+  transport, discarding what arrives, until the peer's side ends or 5
+  seconds pass, and only then returns the transport to the platform. The
+  bounded wait lets accepted writes progress; peer transport end does not
+  acknowledge application consumption of END. Immediate release can otherwise
+  cancel accepted writes. The platform transport then
+  attempts to drain accepted writes and half-close within 5 seconds, then
+  closes immediately. A failed or timed-out shutdown can leave pending writes
+  that the close aborts.
+  DATA received before the end stays readable until the call is destroyed.
+- OpenSSL enforces the one-HelloRetryRequest limit. The TLS message callback
+  observes repeated HRRs, and the call owner reports that rejected handshake
+  as `ProtocolFailure`. Other handshake authentication failures retain their
+  authentication result, including failures after one valid HRR.
+- KeyUpdate updates the sender's keys only. A peer NewSessionTicket is a
+  protocol failure.
+- Frame positions are fixed (OFFER or SELECT, AUTH, ACCEPT), so at most four
+  frames can precede MediaAuthorized. The 64-frame bound stays as a guard.
+- Starting the run, the responder's decision and each establishment input
+  (relay replies, TLS handshake bytes and application frames) recheck
+  cancellation, authority, trust and the establishment deadlines before they
+  act. Reserve and handshake deadlines also apply to input arriving at their
+  boundary. A cancel or hangup before the run
+  starts ends the attempt without spending the invitation or sending
+  anything, and so does process death before the spend.
+- The responder wipes its copies of the PSK and the invitation once the
+  handshake completes, as the initiator does. OpenSSL's session keeps its own
+  copy until the channel is freed at Closed.
+  Destroying an opened invitation also clears its PSK, encoding and responder
+  bearer token, including an abandoned or failed handoff before JOIN.
+- Ed25519 verification isolates and drains the current OpenSSL error queue.
+  A zero result with a substantive dependency error is a dependency failure;
+  an ordinary mismatch, including OpenSSL's generic provider-signature
+  diagnostic alone, remains an authentication refusal. A prior operation's
+  diagnostics cannot change this classification.
+- The platform calls into the core from its own threads. A call runs on one
+  thread with 20 ms I/O slices. Cancel and authority loss only raise a flag,
+  which the run sees within one slice. Other requests wait for the call's
+  lock, which the run also holds while the platform persists a spend.
+  Platform callbacks (persistence and transport) cannot reenter the core.
+  Destroying a handle must not overlap any other call on that handle.
+- The Android app carries an invitation only as a QR code holding
+  `ito-invitation:1:` and the unpadded base64url of the signed invitation, with
+  zero unused trailing bits. It shows the code on a `FLAG_SECURE` window, and
+  scanning happens on one too. Clipboard and share carry only the public
+  contact code. An in-person scan verifies a contact only when the scanned key
+  equals the stored key, and the app then submits the complete fingerprint.
 
 ## Required endpoint gates
 

@@ -12,7 +12,8 @@ source. A changed or unknown artifact or native license input fails the build
 until its notices are reviewed. Debug instrumentation dependencies are test
 inputs and are not represented as the application's runtime classpath.
 
-The shared YUME Android provider library uses AGPL-3.0-or-later. Its source
+The optional providers-enabled build includes the shared YUME Android provider
+library under AGPL-3.0-or-later. Its source
 version and full source aggregate are recorded in the notice manifest's
 `providerIdentity` and `assets/provider-library/provenance.json`. The generator
 checks the resolved source AAR's provenance and records its exact AAR hash.
@@ -21,6 +22,8 @@ packaged as `AppAuth-LICENSE.txt` alongside the reviewed coroutines texts.
 Its AndroidX browser, AppCompat, fragment and widget dependencies retain their
 resolved versions. Their exact Google Maven artifacts and Apache-2.0 grants
 are reviewed in the catalog, without changing versions to match another app.
+The default minimal build excludes this library and AppAuth. Its notice manifest
+sets `providersEnabled` to false and omits their artifacts and source claim.
 
 ## Native transport
 
@@ -51,6 +54,18 @@ AndroidX may package `libandroidx.graphics.path.so` under Apache-2.0, covered
 by its runtime artifact notice. BaseFWX is not part of Ito's native transport
 or app-data storage.
 
+## Call core
+
+The [call core](native/call/README.md), `libitocall.so`, is Ito's own
+AGPL-3.0-or-later code. It statically links stock, unpatched OpenSSL 3.5.9
+under Apache-2.0, built from the release archive that
+`tools/security-component.json` pins by hash. Its `LICENSE.txt` is
+byte-identical to the OpenSSL text already packaged, and the release carries
+no separate NOTICE file. The notice manifest binds the packaged library to
+the core's `provenance.json`, and a different archive requires a catalog
+review. This copy of OpenSSL is separate from the patched 3.5.7 inside
+libyume, and neither library exports OpenSSL symbols.
+
 ## Call relay service
 
 The operator-side [relay](relay/README.md) is Ito's own AGPL-3.0-or-later
@@ -58,13 +73,18 @@ code and links only the C++ standard library of the compiler that builds it.
 It is not part of the APK. Its yumed harness loads the operator's libyume and
 YUME programs at test time and redistributes none of them.
 
-## Android application libraries
+## QR codes and the camera
 
-The separate host-only [security component evaluation](docs/SECURITY_COMPONENT.md)
-pins stock OpenSSL 3.5.9 under Apache-2.0. It changes no APK dependency or
-packaged notice. Later endpoint integration must explicitly bind and include
-its actual native archives, license/NOTICE inputs and corresponding source,
-independently of libyume's existing patched OpenSSL inventory.
+ZXing core 3.5.4 (`com.google.zxing:core`) encodes and decodes the QR codes
+for contact codes and invitations. It uses Apache-2.0. The APK carries the
+full Apache-2.0 text and ZXing's NOTICE file from the `zxing-3.5.4` tag,
+which keeps its Barcode4J and JCommander attributions. The jar has no
+runtime dependencies. Its SHA-256 is pinned in the catalog, and the
+maintainer's signature on the Maven Central artifact was checked when it
+was selected. Camera frames come from Android's framework Camera2 API, so
+no camera library is packaged.
+
+## Android application libraries
 
 AndroidX, Compose, Material, Kotlin, coroutines, serialization and resolved
 annotation/support libraries use the full Apache-2.0 texts and their applicable

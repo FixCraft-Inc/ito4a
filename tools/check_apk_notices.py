@@ -35,6 +35,10 @@ def expected_notices(directory: Path) -> dict[str, bytes]:
     return result
 
 
+# Native libraries the notice inventory binds by hash.
+PACKAGED = ("libyume.so", "libitocall.so", "libc++_shared.so")
+
+
 def verify(apk: Path, expected_directory: Path) -> dict:
     expected = expected_notices(expected_directory)
     manifest = json.loads(expected["assets/notices/manifest.json"])
@@ -42,7 +46,7 @@ def verify(apk: Path, expected_directory: Path) -> dict:
     if not native_libraries:
         raise ValueError("Missing native library inventory")
     for name, digest in native_libraries.items():
-        if (not re.fullmatch(r"lib/(arm64-v8a|armeabi-v7a|x86|x86_64)/(libyume|libc\+\+_shared)\.so", name)
+        if (not re.fullmatch(r"lib/(arm64-v8a|armeabi-v7a|x86|x86_64)/(libyume|libitocall|libc\+\+_shared)\.so", name)
                 or not re.fullmatch(r"[0-9a-f]{64}", digest)):
             raise ValueError("Invalid native library inventory")
     with zipfile.ZipFile(apk) as archive:
@@ -61,12 +65,12 @@ def verify(apk: Path, expected_directory: Path) -> dict:
                 raise ValueError(f"Incomplete or changed notice: {name}")
         packaged = Counter(name for name in archive.namelist()
                            if name.startswith("lib/") and
-                           name.rsplit("/", 1)[-1] in ("libyume.so", "libc++_shared.so"))
+                           name.rsplit("/", 1)[-1] in PACKAGED)
         if not packaged or any(count != 1 for count in packaged.values()):
             raise ValueError("Missing or duplicate packaged native libraries")
         abis = {name.split("/")[1] for name in packaged}
         required = {f"lib/{abi}/{library}" for abi in abis
-                    for library in ("libyume.so", "libc++_shared.so")}
+                    for library in PACKAGED}
         if set(packaged) != required or not required.issubset(native_libraries):
             raise ValueError("Packaged native library inventory differs")
         for name in sorted(required):

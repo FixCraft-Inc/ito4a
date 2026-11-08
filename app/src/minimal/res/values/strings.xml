@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Text used only by the minimal build, which has no provider sign-in. -->
+<resources>
+    <string name="connection_import_first">Import a configuration file to connect.</string>
+</resources>

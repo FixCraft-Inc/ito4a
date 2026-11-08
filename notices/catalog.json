@@ -23,7 +23,7 @@
       "name": "Ito",
       "version": "source checkout",
       "license": "AGPL-3.0-or-later",
-      "role": "application and JNI adapter",
+      "role": "application, JNI adapters and call core",
       "notices": [
         "ITO-COPYRIGHT.txt",
         "LICENSE"
@@ -31,7 +31,7 @@
     },
     {
       "name": "YUME shared Android provider library",
-      "version": "0.1.0, exact source in providerIdentity",
+      "version": "0.3.0, exact source in providerIdentity",
       "license": "AGPL-3.0-or-later",
       "role": "generic provider contract, enrollment and selection state",
       "notices": [
@@ -55,6 +55,15 @@
       "notices": [
         "OpenSSL-LICENSE.txt",
         "LICENSE"
+      ]
+    },
+    {
+      "name": "OpenSSL",
+      "version": "3.5.9",
+      "license": "Apache-2.0",
+      "role": "end-to-end call channel in the call core, unpatched",
+      "notices": [
+        "OpenSSL-LICENSE.txt"
       ]
     },
     {
@@ -235,7 +244,7 @@
     },
     "THIRD_PARTY_LICENSES.md": {
       "path": "THIRD_PARTY_LICENSES.md",
-      "sha256": "3696edb72916982ea92b6ab6e691f8633f8e87abcc887d6834085cf66a6c72f6",
+      "sha256": "be85faac51ce55414803b88746b4c4f228a38ddb48d20393fdfe6c3e1aaa4952",
       "origin": "Ito application source THIRD_PARTY_LICENSES.md"
     },
     "Kotlin-1.9.22-NOTICE.txt": {
@@ -257,6 +266,11 @@
       "path": "notices/texts/AppAuth-LICENSE.txt",
       "sha256": "59899c6091b540582ed617e8eeaac4919dc985ccfc35459ee9752b699be5205b",
       "origin": "https://github.com/openid/AppAuth-Android/blob/0.11.1/LICENSE"
+    },
+    "ZXing-NOTICE.txt": {
+      "path": "notices/texts/ZXing-NOTICE.txt",
+      "sha256": "4db4b60aace29ec6c5c4f13ca9cac1930d3c0c54bcc67dceead0c10771120e66",
+      "origin": "https://raw.githubusercontent.com/zxing/zxing/zxing-3.5.4/NOTICE"
     }
   },
   "artifacts": {
@@ -926,6 +940,17 @@
         "AndroidX-LICENSE.txt",
         "Apache-2.0.txt"
       ]
+    },
+    "com.google.zxing:core:3.5.4": {
+      "sha256": "71de5d89341b5fcf5dd89da7f44e84d825d0e084cdf3ec77c9abe26b0f0ceb13",
+      "notices": [
+        "Apache-2.0.txt",
+        "ZXing-NOTICE.txt"
+      ]
     }
+  },
+  "callCore": {
+    "openssl_version": "3.5.9",
+    "openssl_archive_sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
   }
 }
