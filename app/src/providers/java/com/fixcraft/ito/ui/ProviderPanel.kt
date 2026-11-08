@@ -270,7 +270,7 @@ private fun ServerChoice(entry: ServiceEntry, catalog: ProviderCodec.Catalog?, i
             val renew = current && grantAccess(entry, System.currentTimeMillis() / 1000) != GrantAccess.Active
             when {
                 !current || renew -> actions.install(entry.provider, catalog, service.id, server.id)
-                !inUse && installed != null -> actions.select(installed)
+                !inUse -> actions.select(installed)
             }
         }
     }

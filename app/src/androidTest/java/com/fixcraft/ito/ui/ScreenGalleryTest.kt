@@ -116,6 +116,10 @@ class ScreenGalleryTest {
         title = "Settings"
         frame("settings-simple") { SettingsPage(Preferences()) }
         frame("settings-advanced-locked") { SettingsPage(Preferences(presentation = Presentation.Advanced), lockEnabled = true) }
+        title = "Licenses"
+        frame("settings-licenses") { LicensesPage {} }
+        title = "LICENSE"
+        frame("settings-license-text") { NoticePage("LICENSE") }
     }
 
     @Test fun locked() {

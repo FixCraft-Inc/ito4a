@@ -4,7 +4,8 @@ Ito's original application and JNI adapter use AGPL-3.0-or-later, copyright
 2026 FixCraft Inc. [LICENSE](LICENSE) contains the complete terms.
 Third-party code retains its respective grants and attributions.
 
-Every built APK carries complete selected texts under `assets/notices/`.
+Every built APK carries complete selected texts under `assets/notices/`, and
+Settings shows them under Licenses with the source address.
 Its `manifest.json` records the actual resolved runtime coordinates and
 artifact hashes, upstream notice origins, native source binding and packaged
 libyume/C++ runtime hashes. `notices/catalog.json` is the reviewed packaging

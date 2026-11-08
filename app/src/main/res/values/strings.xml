@@ -226,4 +226,12 @@
     <string name="call_route_value">Relay service only. Calls always go through your YUME relay service, and direct calls are not available.</string>
     <string name="call_audio">Call audio</string>
     <string name="call_audio_value">Standard quality, Opus at about 24 kbit/s. Lower-data modes are not available yet.</string>
+    <!-- Settings, licenses and source -->
+    <string name="settings_about">About</string>
+    <string name="about_version">Version</string>
+    <string name="about_license">Ito is free software under the GNU Affero General Public License, version 3 or later. It comes with no warranty.</string>
+    <string name="about_licenses">Licenses</string>
+    <string name="about_source">Source code</string>
+    <string name="licenses_description">Ito\'s license and the notices of the open-source components in this build.</string>
+    <string name="notice_unreadable">This notice could not be opened.</string>
 </resources>

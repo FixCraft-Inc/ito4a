@@ -1,5 +1,6 @@
 package com.fixcraft.ito.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
@@ -85,14 +86,26 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
     // The Calls tab keeps its screen while another tab is shown. Saved state
     // holds only public contact codes.
     var callsRoute by rememberSaveable { mutableStateOf(CALLS_HOME) }
+    // Where the Settings tab is: null for its first screen, empty for the notice list, or one notice file.
+    var notice by rememberSaveable { mutableStateOf<String?>(null) }
+    val openNotice = notice.takeIf { page == Page.Settings }
     val bar = if (page == Page.Calls) callsBar(calls, callsRoute) else CallsBar(null, null)
     val select = { destination: Page ->
         // Choosing the current tab again returns it to its first screen.
         if (destination == Page.Calls && page == Page.Calls) callsRoute = CALLS_HOME
+        if (destination == Page.Settings && page == Page.Settings) notice = null
         onPage(destination)
     }
-    val title = bar.title ?: if (page == Page.Calls) stringResource(R.string.app_name) else stringResource(page.label)
-    ItoFrame(title, bar.back?.let { back -> { callsRoute = back } }, page, snackbar, select) {
+    val title = bar.title ?: when {
+        page == Page.Calls -> stringResource(R.string.app_name)
+        openNotice == null -> stringResource(page.label)
+        openNotice.isEmpty() -> stringResource(R.string.about_licenses)
+        else -> noticeTitle(openNotice)
+    }
+    val closeNotice = { notice = if (notice.isNullOrEmpty()) null else "" }
+    BackHandler(enabled = openNotice != null, onBack = closeNotice)
+    val back: (() -> Unit)? = bar.back?.let { target -> { callsRoute = target } } ?: closeNotice.takeIf { openNotice != null }
+    ItoFrame(title, back, page, snackbar, select) {
         when (state) {
             PreferencesState.Loading -> Column(
                 Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally,
@@ -114,7 +127,11 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
                         // Saved addresses predate enrollment and do nothing on their own.
                         if (advanced) Section { SavedAddresses(state.preferences, model::addService, model::removeService) }
                     }
-                    Page.Settings -> SettingsPage(state.preferences, model::setPresentation, lockEnabled, onLock)
+                    Page.Settings -> when {
+                        openNotice == null -> SettingsPage(state.preferences, model::setPresentation, lockEnabled, onLock) { notice = "" }
+                        openNotice.isEmpty() -> LicensesPage { notice = it }
+                        else -> NoticePage(openNotice)
+                    }
                 }
             }
         }
