@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -14,12 +15,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -40,11 +46,13 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.fixcraft.ito.R
 import com.fixcraft.ito.transport.ConnectionController
 import com.fixcraft.ito.transport.ConnectionFailure
@@ -53,13 +61,31 @@ import com.fixcraft.ito.transport.ConnectionState
 import java.util.Locale
 
 /** What the status card names as the selected route, already in display form. */
-data class SelectedRoute(val name: String, val place: String?)
+data class SelectedRoute(val name: String, val place: ServerPlace = ServerPlace(null, null))
 
-/** A provider-declared ISO country in the user's language. Unknown stays unknown. */
-fun countryName(code: String?): String? {
-    if (code == null || !Regex("[A-Z]{2}").matches(code)) return null
-    val name = Locale("", code).getDisplayCountry(Locale.getDefault())
-    return name.takeIf { it.isNotBlank() && it != code }
+/**
+ * A server's operator-declared country as the screen shows it. Both fields are null
+ * when the operator gave none or the code names no region. The location is never
+ * guessed from an address, and it says nothing about where traffic leaves.
+ */
+data class ServerPlace(val flag: String?, val name: String?)
+
+/** [displayName] turns a region code into words in the user's language. */
+fun serverPlace(country: String?, displayName: (String) -> String = { Locale("", it).getDisplayCountry(Locale.getDefault()) }): ServerPlace {
+    if (country == null || country.length != 2 || country.any { it !in 'A'..'Z' }) return ServerPlace(null, null)
+    val name = displayName(country).takeIf { it.isNotBlank() && it != country } ?: return ServerPlace(null, null)
+    return ServerPlace(country.map { String(Character.toChars(REGIONAL_INDICATOR_A + (it - 'A'))) }.joinToString(""), name)
+}
+
+/** Android draws two of these letters as the region's flag. */
+private const val REGIONAL_INDICATOR_A = 0x1F1E6
+
+/** The flag, or a plain globe when the place is unknown. Decoration only: the name beside it is what gets read aloud. */
+@Composable
+internal fun LocationMark(place: ServerPlace) {
+    val flag = place.flag
+    if (flag != null) Text(flag, fontSize = 22.sp, modifier = Modifier.widthIn(min = 28.dp).clearAndSetSemantics {})
+    else Icon(painterResource(R.drawable.ic_globe), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
@@ -89,8 +115,11 @@ fun ConnectionStatus(state: ConnectionState, controller: ConnectionController, r
             }), style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
         }
-        if (route != null) Text(stringResource(R.string.connection_through,
-            route.place?.let { "${route.name}, $it" } ?: route.name), style = MaterialTheme.typography.bodyLarge)
+        if (route != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (route.place.flag != null) LocationMark(route.place)
+            Text(stringResource(R.string.connection_through, route.place.name?.let { "${route.name}, $it" } ?: route.name),
+                style = MaterialTheme.typography.bodyLarge)
+        }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (state.failure != ConnectionFailure.None) {
             // On the error card the card's own content colour already reads as an error.
@@ -144,12 +173,13 @@ fun ManualConfigurations(state: ConnectionState, controller: ConnectionControlle
     SectionHeading(R.string.manual_transport)
     SupportingText(R.string.transport_notice)
     state.catalog.entries.forEach { entry ->
-        ChoiceRow(entry.label, null, manualInUse && state.catalog.selectedId == entry.id, !busy) {
-            controller.select(entry.id)
-        }
-        TextButton(onClick = { removing = entry.id to entry.label }, enabled = !busy,
-            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-            Text(stringResource(R.string.remove_configuration, entry.label))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                ChoiceRow(entry.label, null, manualInUse && state.catalog.selectedId == entry.id, !busy) { controller.select(entry.id) }
+            }
+            IconButton(onClick = { removing = entry.id to entry.label }, enabled = !busy) {
+                Icon(painterResource(R.drawable.ic_delete), stringResource(R.string.remove_configuration, entry.label))
+            }
         }
     }
     OutlinedButton(onClick = { picker.launch(arrayOf("application/octet-stream", "application/*")) }, enabled = !busy,
@@ -157,7 +187,7 @@ fun ManualConfigurations(state: ConnectionState, controller: ConnectionControlle
     removing?.let { (id, name) ->
         AlertDialog(onDismissRequest = { removing = null },
             title = { Text(stringResource(R.string.remove_configuration_title, name)) },
-            text = { Text(stringResource(R.string.remove_configuration_description)) },
+            text = { Text(stringResource(R.string.remove_configuration_description), Modifier.verticalScroll(rememberScrollState())) },
             confirmButton = { TextButton(onClick = { removing = null; controller.remove(id) },
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
                 Text(stringResource(R.string.remove))
@@ -187,7 +217,7 @@ fun ManualConfigurations(state: ConnectionState, controller: ConnectionControlle
 
 /** One selectable choice. The radio button carries the state, not color alone. */
 @Composable
-internal fun ChoiceRow(title: String, detail: String?, selected: Boolean, enabled: Boolean, onSelect: () -> Unit) {
+internal fun ChoiceRow(title: String, detail: String?, selected: Boolean, enabled: Boolean, place: ServerPlace? = null, onSelect: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp)
             .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)
@@ -196,6 +226,7 @@ internal fun ChoiceRow(title: String, detail: String?, selected: Boolean, enable
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         RadioButton(selected = selected, onClick = null, enabled = enabled)
+        place?.let { LocationMark(it) }
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -258,4 +289,4 @@ internal fun Section(content: @Composable ColumnScope.() -> Unit) {
 
 /** The selected configuration file, if any, as a route name. */
 fun manualRoute(state: ConnectionState): SelectedRoute? =
-    state.catalog.entries.firstOrNull { it.id == state.catalog.selectedId }?.let { SelectedRoute(it.label, null) }
+    state.catalog.entries.firstOrNull { it.id == state.catalog.selectedId }?.let { SelectedRoute(it.label) }

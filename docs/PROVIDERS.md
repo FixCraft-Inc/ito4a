@@ -19,7 +19,7 @@ catalog, grant and persisted selection. A provider cannot change Ito’s routing
 preferences, the manual catalog, local communication identity or peer trust.
 Provider enrollment supplies infrastructure access independently of the local call core and communication identity.
 
-The Add provider form uses one window-bounded scroll area for its title,
+The Add service form uses one window-bounded scroll area for its title,
 fields, consent and actions. Text keeps the configured system size. Back,
 outside dismissal and Cancel discard the unsaved form without enrollment.
 
@@ -49,9 +49,13 @@ Timeout requires a new browser attempt. No lock exemption or callback storage
 is added.
 
 Catalogs contain entitled servers. The Service page lists each by the
-provider-declared country in the user's language and its label. Unknown
-country stays "Location not given". The server address appears only in
-Advanced mode, with a note that it is not proof of where traffic leaves.
+provider-declared country's flag and name in the user's language, then its label.
+Unknown country stays "Location not given" with a plain globe. The flag is
+decoration, so only the name reaches a screen reader. Server addresses appear in
+Advanced mode. The service's details show the installed server's address, with a
+note that it is not proof of where traffic leaves. Each provider row's menu holds
+Refresh servers, Service details and Remove service, and these labels and steps
+match yume4a's.
 Choosing a server provisions and selects that exact service/server authority. Credentials are validated through Ito’s qualified
 JNI adapter to the public C ABI before publication. Ito requires exactly the
 `ito-call` native `stream` service and no local adapters for a provider relay
@@ -84,15 +88,15 @@ borrower, destroys its handle, then closes the credential session and permit.
 A new connection requires an explicit action and a valid exact lease.
 
 A lease lasts as long as the provider grants, which can be as short as an
-hour. The provider card shows when it ends. Ito renews it on its own: Connect
+hour. The service row shows when it ends. Ito renews it on its own: Connect
 renews a due or expired lease first, and a connection reconnects on a renewed
 lease once renewal is allowed and no call is in progress. A call that outlasts
 its lease still ends with it, because the provider closes the old grant before
 issuing the next. Choosing the same server again also renews a due, ended or
 suspended lease. Before that, choosing it does nothing. When the issuer or
 provider refuses the sign-in itself, the shared client forgets the tokens and
-their grant. The card then reads Signed out and offers Sign in, followed by a
-fresh server choice.
+their grant. The row then reads Signed out and offers Sign in with browser,
+followed by a fresh server choice.
 
 ## Removal and manual use
 

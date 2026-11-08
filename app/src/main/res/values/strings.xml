@@ -4,14 +4,14 @@
     <string name="connections">Service</string>
     <string name="settings">Settings</string>
     <string name="no_connections_description">Save an address for a service you choose. Saving an address does not sign you in or contact its server.</string>
-    <string name="add_service">Add service</string>
+    <string name="add_service">Save address</string>
     <string name="service_name">Service name</string>
     <string name="service_address">HTTPS service address</string>
     <string name="service_address_hint">https://your-provider.example</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="remove">Remove</string>
-    <string name="remove_service">Remove service?</string>
+    <string name="remove_service">Remove address?</string>
     <string name="remove_service_description">Remove this saved address from this device?</string>
     <string name="remove_named_service">Remove %1$s</string>
     <string name="saved_not_enrolled">Address saved. Not connected or enrolled.</string>
@@ -22,7 +22,7 @@
     <string name="storage_error">Preferences could not be read. Existing data has been kept.</string>
     <string name="save_error">The change could not be saved. Try again.</string>
     <string name="retry">Try again</string>
-    <string name="manual_transport">Configuration file</string>
+    <string name="manual_transport">Configuration files</string>
     <string name="transport_notice">Use a sealed configuration file and its opening code from an operator you trust. No account is needed.</string>
     <string name="transport_loading">Checking your connection…</string>
     <string name="transport_idle">Not connected</string>
@@ -198,7 +198,7 @@
     <string name="failure_server">The server refused the connection or could not be authenticated.</string>
     <string name="failure_configuration">The configuration file is invalid or does not match this app.</string>
     <string name="failure_storage">Ito could not read its saved connection data.</string>
-    <string name="failure_access">Your provider access is not valid. Open Provider below.</string>
+    <string name="failure_access">Your provider access is not valid. Check Services below.</string>
     <string name="failure_other">The connection ended unexpectedly. Your choice is unchanged.</string>
     <string name="failure_detail">Technical detail: %1$s, code %2$d</string>
     <string name="technical_details">Technical details</string>

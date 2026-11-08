@@ -68,7 +68,6 @@ enum class Page(@StringRes val label: Int, val icon: Int) {
     Settings(R.string.settings, R.drawable.ic_settings),
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: CallsModel,
     page: Page, onPage: (Page) -> Unit,
@@ -92,6 +91,41 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
         if (destination == Page.Calls && page == Page.Calls) callsRoute = CALLS_HOME
         onPage(destination)
     }
+    val title = bar.title ?: if (page == Page.Calls) stringResource(R.string.app_name) else stringResource(page.label)
+    ItoFrame(title, bar.back?.let { back -> { callsRoute = back } }, page, snackbar, select) {
+        when (state) {
+            PreferencesState.Loading -> Column(
+                Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(16.dp))
+                Text(stringResource(R.string.loading))
+            }
+            PreferencesState.Unreadable -> Column(Modifier.padding(24.dp)) {
+                Text(stringResource(R.string.storage_error))
+                TextButton(onClick = model::retryRead) { Text(stringResource(R.string.retry)) }
+            }
+            is PreferencesState.Ready -> {
+                val advanced = state.preferences.presentation == Presentation.Advanced
+                when (page) {
+                    Page.Calls -> CallsPage(calls, callsRoute, { callsRoute = it }, advanced) { onPage(Page.Service) }
+                    Page.Service -> PageColumn {
+                        ServiceConnectionPanel(connectionState, model.connections, model.services, advanced)
+                        // Saved addresses predate enrollment and do nothing on their own.
+                        if (advanced) Section { SavedAddresses(state.preferences, model::addService, model::removeService) }
+                    }
+                    Page.Settings -> SettingsPage(state.preferences, model::setPresentation, lockEnabled, onLock)
+                }
+            }
+        }
+    }
+}
+
+/** The top bar, destinations and snackbar around every page. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ItoFrame(title: String, back: (() -> Unit)?, page: Page, snackbar: SnackbarHostState,
+                      onSelect: (Page) -> Unit, content: @Composable () -> Unit) {
     // A short, wide window (a phone turned sideways) keeps its height for content.
     val rail = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() } < 480.dp
     val scroll = key(page) { TopAppBarDefaults.pinnedScrollBehavior() }
@@ -99,13 +133,10 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             TopAppBar(
-                title = {
-                    Text(bar.title ?: if (page == Page.Calls) stringResource(R.string.app_name) else stringResource(page.label),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
+                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    bar.back?.let { back ->
-                        IconButton(onClick = { callsRoute = back }) {
+                    back?.let { goBack ->
+                        IconButton(onClick = goBack) {
                             Icon(painterResource(R.drawable.ic_arrow_back), stringResource(R.string.back))
                         }
                     }
@@ -119,7 +150,7 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
                 Page.entries.forEach { destination ->
                     NavigationBarItem(
                         selected = page == destination,
-                        onClick = { select(destination) },
+                        onClick = { onSelect(destination) },
                         icon = { Icon(painterResource(destination.icon), contentDescription = null) },
                         label = { Text(stringResource(destination.label), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     )
@@ -128,49 +159,23 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
         },
     ) { insets ->
         Row(Modifier.fillMaxSize().padding(insets)) {
-        if (rail) NavigationRail {
-            Page.entries.forEach { destination ->
-                NavigationRailItem(
-                    selected = page == destination,
-                    onClick = { select(destination) },
-                    icon = { Icon(painterResource(destination.icon), contentDescription = null) },
-                    label = { Text(stringResource(destination.label), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                )
-            }
-        }
-        Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            when (state) {
-                PreferencesState.Loading -> Column(
-                    Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(16.dp))
-                    Text(stringResource(R.string.loading))
-                }
-                PreferencesState.Unreadable -> Column(Modifier.padding(24.dp)) {
-                    Text(stringResource(R.string.storage_error))
-                    TextButton(onClick = model::retryRead) { Text(stringResource(R.string.retry)) }
-                }
-                is PreferencesState.Ready -> {
-                    val advanced = state.preferences.presentation == Presentation.Advanced
-                    when (page) {
-                        Page.Calls -> CallsPage(calls, callsRoute, { callsRoute = it }, advanced) { onPage(Page.Service) }
-                        Page.Service -> PageColumn {
-                            ServiceConnectionPanel(connectionState, model.connections, model.services, advanced)
-                            // Saved addresses predate enrollment and do nothing on their own.
-                            if (advanced) Section { SavedAddresses(state.preferences, model::addService, model::removeService) }
-                        }
-                        Page.Settings -> SettingsPage(state.preferences, model::setPresentation, lockEnabled, onLock)
-                    }
+            if (rail) NavigationRail {
+                Page.entries.forEach { destination ->
+                    NavigationRailItem(
+                        selected = page == destination,
+                        onClick = { onSelect(destination) },
+                        icon = { Icon(painterResource(destination.icon), contentDescription = null) },
+                        label = { Text(stringResource(destination.label), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
                 }
             }
-        }
+            Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.TopCenter) { content() }
         }
     }
 }
 
 @Composable
-private fun SavedAddresses(preferences: Preferences, onAdd: (SavedService) -> Unit, onRemove: (UUID) -> Unit) {
+internal fun SavedAddresses(preferences: Preferences, onAdd: (SavedService) -> Unit, onRemove: (UUID) -> Unit) {
     var adding by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<SavedService?>(null) }
     Column {
@@ -201,7 +206,7 @@ private fun SavedAddresses(preferences: Preferences, onAdd: (SavedService) -> Un
         AlertDialog(
             onDismissRequest = { removing = null },
             title = { Text(stringResource(R.string.remove_service)) },
-            text = { Text(stringResource(R.string.remove_service_description)) },
+            text = { Text(stringResource(R.string.remove_service_description), Modifier.verticalScroll(rememberScrollState())) },
             confirmButton = {
                 TextButton(onClick = { onRemove(service.id); removing = null }) { Text(stringResource(R.string.remove)) }
             },

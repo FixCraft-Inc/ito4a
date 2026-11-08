@@ -375,9 +375,7 @@ class ProviderLiveIntegrationTest {
         val catalog = services.state.value.catalogs.getValue(provider)
         assertEquals(1, catalog.services.size)
         assertEquals(1, catalog.services.single().servers.size)
-        val providers = services.state.value.entries.filter { services.state.value.catalogs[it.provider] != null }
-        val index = providers.indexOfFirst { it.provider == provider }
-        visible(hasText(text(R.string.provider_provision)) and hasClickAction(), index).performClick()
+        visible(hasText(catalog.services.single().servers.single().label) and hasClickAction()).performClick()
         await { services.state.value.codePrompt?.provider == provider }
         val prompt = requireNotNull(services.state.value.codePrompt)
         host("opening-code", provider = provider, prompt = prompt)
@@ -624,11 +622,31 @@ class ProviderLiveIntegrationTest {
         assertTrue(reply.delete())
     }
 
+    /** Steps appear only on the rows they apply to, and the menu owns refreshing and removal. */
     private fun within(provider: String, resource: Int) {
-        val entries = services.state.value.entries.filter { resource != R.string.provider_sign_in || it.issuer != null }
+        val state = services.state.value
+        if (resource == R.string.provider_remove) { menu(provider); click(resource); return }
+        if (resource == R.string.provider_servers && state.catalogs[provider] != null) {
+            menu(provider); click(R.string.provider_refresh_servers); return
+        }
+        val entries = state.entries.filter { row ->
+            when (resource) {
+                R.string.provider_sign_in -> row.issuer != null && !row.authorized
+                R.string.provider_servers -> state.catalogs[row.provider] == null && (row.issuer == null || row.authorized)
+                R.string.provider_select -> row.selection != null && (state.manual || state.selection?.provider != row.provider)
+                else -> true
+            }
+        }
         val index = entries.indexOfFirst { it.provider == provider }
         require(index >= 0)
         visible(hasText(text(resource)) and hasClickAction(), index).performClick()
+    }
+
+    private fun menu(provider: String) {
+        val entries = services.state.value.entries
+        val label = entries.single { it.provider == provider }.label
+        val index = entries.filter { it.label == label }.indexOfFirst { it.provider == provider }
+        visible(hasContentDescription(context.getString(R.string.provider_more, label)) and hasClickAction(), index).performClick()
     }
     private fun navigate() = compose.onNode(hasText(text(R.string.connections)) and isSelectable()).performClick()
     private fun click(resource: Int) = click(text(resource))

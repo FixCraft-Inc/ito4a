@@ -24,10 +24,12 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -82,7 +84,7 @@ import java.text.Collator
 import kotlinx.coroutines.launch
 
 /** Where the Calls tab is. Saved state holds only public contact codes. */
-private sealed interface CallsScreen {
+internal sealed interface CallsScreen {
     data object Home : CallsScreen
     data object Add : CallsScreen
     data object ScanInvitation : CallsScreen
@@ -160,22 +162,8 @@ fun CallsPage(model: CallsModel, route: String = CALLS_HOME, onRoute: (String) -
     val connected = connection.phase == ConnectionPhase.Connected
 
     when (val state = book) {
-        BookState.Loading -> PageColumn {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(16.dp))
-            Text(stringResource(R.string.identity_loading))
-        }
-        is BookState.Failed -> PageColumn {
-            Heading(R.string.identity_unreadable_title)
-            Spacer(Modifier.height(12.dp))
-            Text(stringResource(when (state.reason) {
-                IdentityFailure.Corrupt -> R.string.identity_corrupt
-                IdentityFailure.KeyUnavailable -> R.string.identity_key_unavailable
-                IdentityFailure.Io -> R.string.identity_io
-            }))
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = model::open) { Text(stringResource(R.string.retry)) }
-        }
+        BookState.Loading -> IdentityLoading()
+        is BookState.Failed -> IdentityUnreadable(state.reason, model::open)
         is BookState.Ready -> {
             val identity = state.identity
             when {
@@ -217,7 +205,27 @@ fun CallsPage(model: CallsModel, route: String = CALLS_HOME, onRoute: (String) -
 }
 
 @Composable
-private fun CreateIdentity(model: CallsModel) = PageColumn {
+internal fun IdentityLoading() = PageColumn {
+    CircularProgressIndicator()
+    Spacer(Modifier.height(16.dp))
+    Text(stringResource(R.string.identity_loading))
+}
+
+@Composable
+internal fun IdentityUnreadable(reason: IdentityFailure, onRetry: () -> Unit) = PageColumn {
+    Heading(R.string.identity_unreadable_title)
+    Spacer(Modifier.height(12.dp))
+    Text(stringResource(when (reason) {
+        IdentityFailure.Corrupt -> R.string.identity_corrupt
+        IdentityFailure.KeyUnavailable -> R.string.identity_key_unavailable
+        IdentityFailure.Io -> R.string.identity_io
+    }))
+    Spacer(Modifier.height(16.dp))
+    Button(onClick = onRetry) { Text(stringResource(R.string.retry)) }
+}
+
+@Composable
+internal fun CreateIdentity(model: CallsModel) = PageColumn {
     Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Icon(painterResource(R.drawable.ic_ito), null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
@@ -231,7 +239,7 @@ private fun CreateIdentity(model: CallsModel) = PageColumn {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Home(identity: OwnIdentity, contacts: List<Contact>, connected: Boolean, onService: () -> Unit,
+internal fun Home(identity: OwnIdentity, contacts: List<Contact>, connected: Boolean, onService: () -> Unit,
                  go: (CallsScreen) -> Unit) = PageColumn {
     ConnectionHint(connected, onService)
     Spacer(Modifier.height(16.dp))
@@ -357,7 +365,7 @@ private val codeKeyboard = KeyboardOptions(KeyboardCapitalization.None, autoCorr
     keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done)
 
 @Composable
-private fun AddContact(model: CallsModel, onDone: (ByteArray?) -> Unit) = PageColumn {
+internal fun AddContact(model: CallsModel, onDone: (ByteArray?) -> Unit) = PageColumn {
     val scope = rememberCoroutineScope()
     var name by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
@@ -385,7 +393,7 @@ private fun AddContact(model: CallsModel, onDone: (ByteArray?) -> Unit) = PageCo
 }
 
 @Composable
-private fun ContactDetails(contact: Contact, contacts: List<Contact>, connected: Boolean, model: CallsModel,
+internal fun ContactDetails(contact: Contact, contacts: List<Contact>, connected: Boolean, model: CallsModel,
                            go: (CallsScreen) -> Unit, onService: () -> Unit) = PageColumn {
     val scope = rememberCoroutineScope()
     var scanning by rememberSaveable { mutableStateOf(false) }
@@ -393,13 +401,17 @@ private fun ContactDetails(contact: Contact, contacts: List<Contact>, connected:
     val trusted = contact.verified && !contact.blocked && contact.replacedBy == null
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Monogram(contact.name, trusted, diameter = 56)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (trusted) {
-                Icon(painterResource(R.drawable.ic_check), null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(4.dp))
+        Column(Modifier.weight(1f)) {
+            // The top bar cuts a long name to one line, so the complete name is here.
+            Text(contact.name, style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (trusted) {
+                    Icon(painterResource(R.drawable.ic_check), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(stringResource(trustLabel(contact)), style = MaterialTheme.typography.bodyMedium,
+                    color = if (contact.blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(stringResource(trustLabel(contact)), style = MaterialTheme.typography.titleMedium,
-                color = if (contact.blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
         }
     }
     Spacer(Modifier.height(16.dp))
@@ -463,7 +475,7 @@ private fun ContactDetails(contact: Contact, contacts: List<Contact>, connected:
     if (blocking) androidx.compose.material3.AlertDialog(
         onDismissRequest = { blocking = false },
         title = { Text(stringResource(R.string.block_contact_title)) },
-        text = { Text(stringResource(R.string.block_contact_description)) },
+        text = { Text(stringResource(R.string.block_contact_description), Modifier.verticalScroll(rememberScrollState())) },
         confirmButton = { TextButton(onClick = { blocking = false; model.block(contact.key) },
             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
             Text(stringResource(R.string.block))
@@ -473,7 +485,7 @@ private fun ContactDetails(contact: Contact, contacts: List<Contact>, connected:
 }
 
 @Composable
-private fun ReplaceKey(contact: Contact, model: CallsModel, onDone: (ByteArray?) -> Unit) = PageColumn {
+internal fun ReplaceKey(contact: Contact, model: CallsModel, onDone: (ByteArray?) -> Unit) = PageColumn {
     val scope = rememberCoroutineScope()
     var code by rememberSaveable { mutableStateOf("") }
     var scanning by rememberSaveable { mutableStateOf(false) }

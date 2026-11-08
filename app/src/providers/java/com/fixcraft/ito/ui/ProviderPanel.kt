@@ -1,14 +1,14 @@
 package com.fixcraft.ito.ui
 
-import android.content.ActivityNotFoundException
 import androidx.annotation.StringRes
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -20,11 +20,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -34,14 +38,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -51,61 +55,73 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.fixcraft.ito.BuildConfig
 import com.fixcraft.ito.R
-import com.fixcraft.ito.integration.provisionProvider
-import com.fixcraft.ito.integration.selectProvider
-import com.fixcraft.ito.provider.ItoProviderSession
-import com.fixcraft.ito.transport.ConnectionController
-import com.fixcraft.yume.consumer.ServiceController
 import com.fixcraft.yume.consumer.ServiceEntry
+import com.fixcraft.yume.consumer.ServiceSelection
 import com.fixcraft.yume.consumer.ServiceUiState
 import com.fixcraft.yume.provider.ProviderCodec
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
+/** What the panel can ask of the shared controller. The page supplies it, and only the controller changes enrollment. */
+class ServiceActions(
+    val add: (String, String?) -> Unit,
+    val authorize: (String) -> Unit,
+    val catalog: (String) -> Unit,
+    val install: (String, ProviderCodec.Catalog, String, String) -> Unit,
+    val select: (ServiceSelection) -> Unit,
+    val cancel: (String) -> Unit,
+    val remove: (String) -> Unit,
+    val code: (String, CharArray) -> Unit,
+)
+
 /**
- * Ito owns presentation. The shared controller owns every enrollment
- * transition. The ordinary path is: continue with a provider, sign in, choose
- * a server. Server addresses and identities appear only in Advanced mode.
+ * The Services section: one row per provider, its account state and the next useful
+ * step, with the same labels and order as yume4a. Refreshing, removal and technical
+ * facts stay in each row's menu. Advanced mode adds the server addresses.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ProviderPanel(state: ServiceUiState, controller: ServiceController<ItoProviderSession>,
-                  connections: ConnectionController, advanced: Boolean) {
+fun ProviderPanel(state: ServiceUiState, actions: ServiceActions, advanced: Boolean,
+                  suggestedProvider: String = BuildConfig.SUGGESTED_PROVIDER, suggestedIssuer: String = BuildConfig.SUGGESTED_ISSUER) {
     var adding by remember { mutableStateOf(false) }
-    var removing by remember { mutableStateOf<String?>(null) }
-    SectionHeading(R.string.provider_services)
-    SupportingText(R.string.provider_scope)
+    var removing by remember { mutableStateOf<ServiceEntry?>(null) }
+    var details by remember { mutableStateOf<ServiceEntry?>(null) }
+    // A suggestion waits for an explicit Continue. Nothing is contacted before that.
+    val suggestion = suggestedProvider.takeIf { it.isNotEmpty() && state.browserRegistered && state.loaded && state.entries.isEmpty() }
+    // The action moves under the heading rather than splitting its word at large text.
+    FlowRow(Modifier.fillMaxWidth().heightIn(min = 48.dp), horizontalArrangement = Arrangement.SpaceBetween,
+        itemVerticalAlignment = Alignment.CenterVertically) {
+        SectionHeading(R.string.provider_services)
+        when {
+            suggestion != null -> Unit
+            state.entries.isEmpty() -> FilledTonalButton(onClick = { adding = true }) { Text(stringResource(R.string.provider_add)) }
+            else -> TextButton(onClick = { adding = true }) { Text(stringResource(R.string.provider_add)) }
+        }
+    }
+    if (state.loaded && state.entries.isEmpty()) SupportingText(R.string.provider_scope)
     state.error?.let { Text(stringResource(providerMessage(it), it), color = MaterialTheme.colorScheme.error) }
-    if (state.removed) Text(stringResource(R.string.provider_removed))
-    if (state.loaded && state.entries.isEmpty()) {
-        val suggested = BuildConfig.SUGGESTED_PROVIDER
-        if (suggested.isNotEmpty() && state.browserRegistered) SuggestedProvider(suggested, BuildConfig.SUGGESTED_ISSUER,
-            busy = suggested in state.busy) { controller.add(suggested, BuildConfig.SUGGESTED_ISSUER.ifEmpty { null }) }
-        TextButton(onClick = { adding = true }) { Text(stringResource(R.string.provider_other)) }
-    }
+    if (state.removed) SupportingText(R.string.provider_removed)
+    if (suggestion != null) SuggestedProvider(suggestion, suggestedIssuer, busy = suggestion in state.busy,
+        onContinue = { actions.add(suggestion, suggestedIssuer.ifEmpty { null }) }, onOther = { adding = true })
     state.entries.forEach { entry ->
-        ProviderEntry(entry, state, controller, connections, advanced) { removing = entry.provider }
+        ServiceRow(entry, state, actions, advanced, onDetails = { details = entry }, onRemove = { removing = entry })
     }
-    // Several providers can coexist. Each still needs its own consent in the dialog.
-    if (state.loaded && state.entries.isNotEmpty()) TextButton(onClick = { adding = true }) {
-        Text(stringResource(R.string.provider_add_another))
-    }
-    if (adding) AddProviderDialog(onDismiss = { adding = false }) { origin, issuer ->
+    if (adding) AddProviderDialog(suggestedProvider, suggestedIssuer, onDismiss = { adding = false }) { origin, issuer ->
         adding = false
-        controller.add(origin, issuer)
+        actions.add(origin, issuer)
     }
-    removing?.let { provider ->
+    removing?.let { entry ->
         AlertDialog(onDismissRequest = { removing = null }, title = { Text(stringResource(R.string.provider_remove)) },
-            text = { Text(stringResource(R.string.provider_remove_notice, host(provider))) },
-            confirmButton = { TextButton(onClick = { removing = null; controller.remove(provider) },
+            text = { Text(stringResource(R.string.provider_remove_notice, host(entry.provider)), Modifier.verticalScroll(rememberScrollState())) },
+            confirmButton = { TextButton(onClick = { removing = null; actions.remove(entry.provider) },
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.remove)) } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text(stringResource(R.string.cancel)) } })
     }
+    details?.let { entry -> ServiceDetailsDialog(entry, advanced) { details = null } }
     state.codePrompt?.let { prompt ->
         // Only anonymous providers deliver an opening code out of band.
         var code by remember(prompt.id) { mutableStateOf("") }
-        AlertDialog(onDismissRequest = { code = ""; controller.cancel(prompt.provider) },
+        AlertDialog(onDismissRequest = { code = ""; actions.cancel(prompt.provider) },
             title = { Text(stringResource(R.string.provider_opening)) }, text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(host(prompt.provider))
@@ -115,17 +131,17 @@ fun ProviderPanel(state: ServiceUiState, controller: ServiceController<ItoProvid
                 }
             }, confirmButton = {
                 TextButton(enabled = code.length in 25..64, onClick = {
-                    val owned = code.toCharArray(); code = ""; controller.submitCode(prompt.id, owned)
+                    val owned = code.toCharArray(); code = ""; actions.code(prompt.id, owned)
                 }) { Text(stringResource(R.string.save)) }
-            }, dismissButton = { TextButton(onClick = { code = ""; controller.cancel(prompt.provider) }) { Text(stringResource(R.string.cancel)) } })
+            }, dismissButton = { TextButton(onClick = { code = ""; actions.cancel(prompt.provider) }) { Text(stringResource(R.string.cancel)) } })
     }
 }
 
-/** States what will be contacted before anything is. Nothing is added until Continue. */
+/** States what will be contacted before anything is. */
 @Composable
-private fun SuggestedProvider(origin: String, issuer: String, busy: Boolean, onContinue: () -> Unit) {
+private fun SuggestedProvider(origin: String, issuer: String, busy: Boolean, onContinue: () -> Unit, onOther: () -> Unit) {
     OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.provider_suggested_title), style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.provider_suggested_body, host(origin), host(issuer.ifEmpty { origin })),
                 style = MaterialTheme.typography.bodyMedium)
@@ -133,119 +149,165 @@ private fun SuggestedProvider(origin: String, issuer: String, busy: Boolean, onC
             Button(onClick = onContinue, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.provider_continue))
             }
+            TextButton(onClick = onOther) { Text(stringResource(R.string.provider_other)) }
         }
     }
 }
 
 @Composable
-private fun ProviderEntry(entry: ServiceEntry, state: ServiceUiState, controller: ServiceController<ItoProviderSession>,
-                          connections: ConnectionController, advanced: Boolean, onRemove: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val busy = entry.provider in state.busy || state.authorizing == entry.provider
+private fun ServiceRow(entry: ServiceEntry, state: ServiceUiState, actions: ServiceActions, advanced: Boolean,
+                       onDetails: () -> Unit, onRemove: () -> Unit) {
+    val busy = entry.provider in state.busy
+    val pending = state.authorizing == entry.provider
     val inUse = !state.manual && state.selection?.provider == entry.provider
-    // One card per provider keeps its sign-in, servers and removal together.
-    OutlinedCard(Modifier.fillMaxWidth()) {
-    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(entry.label, style = MaterialTheme.typography.titleMedium)
-        Text(stringResource(R.string.provider_role_relay), style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (entry.authorized && !entry.suspended) {
-                Icon(painterResource(R.drawable.ic_check), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(6.dp))
+    val canAskForServers = entry.issuer == null || entry.authorized
+    val access = grantAccess(entry, System.currentTimeMillis() / 1000)
+    OutlinedCard(Modifier.fillMaxWidth(), border = if (inUse) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder()) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f).padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(entry.label, style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(when {
+                        entry.suspended -> R.string.provider_suspended
+                        entry.issuer == null -> R.string.provider_no_account
+                        entry.authorized -> R.string.provider_signed_in
+                        else -> R.string.provider_signed_out
+                    }), style = MaterialTheme.typography.bodyMedium,
+                        color = if (entry.suspended) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                ServiceMenu(entry, enabled = !busy && !pending, canAskForServers, onRefresh = { actions.catalog(entry.provider) }, onDetails, onRemove)
             }
-            Text(stringResource(when {
-                entry.suspended -> R.string.provider_suspended
-                entry.authorized -> R.string.provider_signed_in
-                else -> R.string.provider_signed_out
-            }), style = MaterialTheme.typography.bodyMedium,
-                color = if (entry.suspended) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-        }
-        if (advanced || !entry.authorized) {
-            Text(stringResource(R.string.provider_origin_detail, host(entry.provider)), style = MaterialTheme.typography.bodySmall)
-            entry.issuer?.let { Text(stringResource(R.string.provider_issuer_detail, host(it)), style = MaterialTheme.typography.bodySmall) }
-        }
-        if (busy) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.provider_busy), Modifier.weight(1f))
-                TextButton(onClick = { controller.cancel(entry.provider) }) { Text(stringResource(R.string.cancel)) }
+            // Before authorization, the row names what the person is about to trust.
+            val issuer = entry.issuer
+            if (issuer != null && !entry.authorized) {
+                Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SupportingText(R.string.provider_role_relay)
+                    LabeledValue(R.string.provider_label_provider, host(entry.provider))
+                    LabeledValue(R.string.provider_label_sign_in, host(issuer))
+                }
             }
-        }
-        val issuer = entry.issuer
-        // Signing in again cannot lift a suspension. Choosing the server again can.
-        if (issuer != null && !entry.authorized) {
-            if (state.browserRegistered) {
-                Button(enabled = !busy && state.authorizing == null, modifier = Modifier.heightIn(min = 48.dp), onClick = {
-                    scope.launch {
-                        try { context.startActivity(controller.authorize(entry.provider)) }
-                        catch (cancelled: CancellationException) { controller.browserLaunchFailed(entry.provider); throw cancelled }
-                        catch (_: ProviderCodec.Refusal) { /* The controller publishes its typed failure. */ }
-                        catch (_: ActivityNotFoundException) { controller.browserLaunchFailed(entry.provider) }
-                        catch (_: SecurityException) { controller.browserLaunchFailed(entry.provider) }
-                    }
-                }) { Text(stringResource(R.string.provider_sign_in)) }
-                SupportingText(stringResource(R.string.provider_sign_in_note, host(issuer)))
-            } else SupportingText(R.string.provider_unregistered)
-        }
-        if (entry.authorized) ServerChoice(entry, state, controller, connections, advanced, busy)
-        if (entry.selection != null && !inUse) OutlinedButton(enabled = !busy && !entry.suspended,
-            onClick = { connections.selectProvider(controller, entry.selection!!) }) { Text(stringResource(R.string.provider_select)) }
-        TextButton(onClick = onRemove, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-            Text(stringResource(R.string.provider_remove))
+            when {
+                pending -> Working(R.string.provider_authorization, R.string.provider_cancel_sign_in) { actions.cancel(entry.provider) }
+                busy -> Working(R.string.provider_busy, R.string.cancel) { actions.cancel(entry.provider) }
+            }
+            if (issuer != null && !entry.authorized && !pending) {
+                if (state.browserRegistered) {
+                    Button(onClick = { actions.authorize(entry.provider) }, enabled = !busy && state.authorizing == null,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.provider_sign_in)) }
+                    SupportingText(stringResource(R.string.provider_sign_in_note, host(issuer)))
+                } else SupportingText(R.string.provider_unregistered)
+            }
+            if (canAskForServers) ServerChoice(entry, state.catalogs[entry.provider], inUse, advanced, busy, actions)
+            // A suspended row already says what to do, and a lease cannot open until then.
+            if (!entry.suspended) {
+                access?.let { GrantAccessText(it, entry.expiresAt) }
+                val installed = entry.selection
+                if (installed != null && !inUse && !busy) Button(onClick = { actions.select(installed) },
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.provider_select)) }
+            }
         }
     }
+}
+
+/** Refresh, details and removal, out of the way of the next step. */
+@Composable
+private fun ServiceMenu(entry: ServiceEntry, enabled: Boolean, canRefresh: Boolean, onRefresh: () -> Unit, onDetails: () -> Unit, onRemove: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(painterResource(R.drawable.ic_more_vert), stringResource(R.string.provider_more, entry.label),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (canRefresh) DropdownMenuItem(text = { Text(stringResource(R.string.provider_refresh_servers)) }, enabled = enabled,
+                onClick = { open = false; onRefresh() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.provider_details)) }, onClick = { open = false; onDetails() })
+            // Removal stays available during other work, because it also ends that work.
+            DropdownMenuItem(text = { Text(stringResource(R.string.provider_remove), color = MaterialTheme.colorScheme.error) },
+                onClick = { open = false; onRemove() })
+        }
     }
+}
+
+@Composable
+private fun Working(@StringRes text: Int, @StringRes action: Int, onAction: () -> Unit) {
+    LinearProgressIndicator(Modifier.fillMaxWidth().padding(end = 8.dp))
+    SupportingText(text)
+    TextButton(onClick = onAction) { Text(stringResource(action)) }
+}
+
+/** A short label and its value on one line, wrapping as one sentence at large text. */
+@Composable
+private fun LabeledValue(@StringRes label: Int, value: String) {
+    Text("${stringResource(label)}: $value", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /**
- * Lists the account's servers by place and name. Choosing one requests a
- * device lease and selects it. An installed choice cannot silently move to
- * another server. Choosing it again renews its lease once that is allowed.
+ * Lists the account's servers by place and name. Choosing one requests a device
+ * lease and selects it. An installed choice cannot silently move to another
+ * server. Choosing it again renews its lease once that is allowed.
  */
 @Composable
-private fun ServerChoice(entry: ServiceEntry, state: ServiceUiState, controller: ServiceController<ItoProviderSession>,
-                         connections: ConnectionController, advanced: Boolean, busy: Boolean) {
-    val catalog = state.catalogs[entry.provider]
+private fun ServerChoice(entry: ServiceEntry, catalog: ProviderCodec.Catalog?, inUse: Boolean, advanced: Boolean, busy: Boolean, actions: ServiceActions) {
     val installed = entry.selection
-    val access = grantAccess(entry, System.currentTimeMillis() / 1000)
-    Text(stringResource(R.string.provider_choose_server), style = MaterialTheme.typography.titleSmall)
     if (catalog == null) {
-        installed?.let { selection ->
-            ChoiceRow(countryName(entry.server?.country) ?: selection.label,
-                if (countryName(entry.server?.country) != null) selection.label else null, true, false) {}
-            access?.let { GrantAccessText(it, entry.expiresAt) }
-        }
-        OutlinedButton(enabled = !busy, onClick = { controller.catalog(entry.provider) }) {
-            Text(stringResource(R.string.provider_servers))
-        }
-    } else {
-        if (catalog.services.isEmpty()) SupportingText(R.string.provider_no_entitlement)
-        catalog.services.forEach { service ->
-            service.servers.forEach { server ->
-                val current = installed?.service == service.id && installed.server == server.id
-                val place = countryName(server.country)
-                ChoiceRow(place ?: server.label, if (place != null) server.label else stringResource(R.string.provider_location_unknown),
-                    current, enabled = !busy && (installed == null || current)) {
-                    // Decide at the tap: the screen may have been open since the lease could renew.
-                    val renew = current && grantAccess(entry, System.currentTimeMillis() / 1000) != GrantAccess.Active
-                    if (!current || renew) connections.provisionProvider(controller, entry.provider, catalog, service.id, server.id)
-                }
-                if (current) access?.let { GrantAccessText(it, entry.expiresAt) }
-                if (advanced) Text(stringResource(R.string.provider_server_address, server.host, server.port),
-                    style = MaterialTheme.typography.bodySmall)
+        // The list is not loaded yet, but the installed server is known from the last one.
+        val server = entry.server
+        if (installed != null && server != null) ServerRow(server.country, installed.label, server.host, server.port, advanced, inUse, enabled = false) {}
+        // With a server installed, the list is a refresh and Connect stays the next step.
+        if (installed == null || entry.suspended) Button(onClick = { actions.catalog(entry.provider) }, enabled = !busy,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.provider_servers)) }
+        else TextButton(onClick = { actions.catalog(entry.provider) }, enabled = !busy) { Text(stringResource(R.string.provider_servers)) }
+        return
+    }
+    val servers = catalog.services.flatMap { service -> service.servers.map { service to it } }
+    if (servers.isEmpty()) SupportingText(R.string.provider_no_entitlement)
+    if (installed == null && servers.isNotEmpty()) Text(stringResource(R.string.provider_choose_server), style = MaterialTheme.typography.titleSmall)
+    servers.forEach { (service, server) ->
+        val current = installed?.service == service.id && installed.server == server.id
+        ServerRow(server.country, server.label, server.host, server.port, advanced, current && inUse, enabled = !busy && (installed == null || current)) {
+            // Decided at the tap: the screen may have been open since the lease could renew.
+            val renew = current && grantAccess(entry, System.currentTimeMillis() / 1000) != GrantAccess.Active
+            when {
+                !current || renew -> actions.install(entry.provider, catalog, service.id, server.id)
+                !inUse && installed != null -> actions.select(installed)
             }
         }
-        if (installed != null && catalog.services.sumOf { it.servers.size } > 1) {
-            SupportingText(R.string.provider_replace_requires_remove)
-        }
-        TextButton(enabled = !busy, onClick = { controller.catalog(entry.provider) }) {
-            Text(stringResource(R.string.provider_refresh_servers))
-        }
     }
-    if (advanced && installed != null) Text(stringResource(R.string.provider_identity, installed.identity),
-        style = MaterialTheme.typography.bodySmall)
+    if (installed != null && servers.size > 1) SupportingText(R.string.provider_replace_requires_remove)
+}
+
+@Composable
+private fun ServerRow(country: String?, label: String, host: String, port: Int, advanced: Boolean, selected: Boolean, enabled: Boolean, onSelect: () -> Unit) {
+    val place = serverPlace(country)
+    ChoiceRow(place.name ?: stringResource(R.string.provider_location_unknown),
+        if (advanced) "$label\n$host:$port" else label, selected, enabled, place, onSelect)
+}
+
+/** The provider and its issuer are distinct identities, so each keeps its own label even when the origins match. */
+@Composable
+private fun ServiceDetailsDialog(entry: ServiceEntry, advanced: Boolean, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(entry.label) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DetailFact(R.string.provider_label_provider, entry.provider)
+                entry.issuer?.let { DetailFact(R.string.provider_label_sign_in, it) }
+                entry.selection?.let { selected ->
+                    DetailFact(R.string.provider_label_address, "${selected.host}:${selected.port}")
+                    SupportingText(R.string.provider_server_address_note)
+                    if (advanced) DetailFact(R.string.provider_label_identity, selected.identity)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.done)) } })
+}
+
+@Composable
+private fun DetailFact(@StringRes label: Int, value: String) {
+    Column {
+        Text(stringResource(label), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 @StringRes
@@ -270,7 +332,7 @@ private fun host(origin: String) = origin.removePrefix("https://")
 /** Provider origins are URLs: no capitals, suggestions or autocorrection. */
 private val urlKeyboard = KeyboardOptions(KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = KeyboardType.Uri)
 
-/** Leases last up to an hour, so the card says when this one ends and how to renew it. */
+/** Leases last up to an hour, so the row says when this one ends and how to renew it. */
 @Composable
 private fun GrantAccessText(access: GrantAccess, expiresAt: Long?) {
     val time = expiresAt?.let { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it * 1000)) }
@@ -288,9 +350,9 @@ private fun SupportingText(text: String) {
 }
 
 @Composable
-private fun AddProviderDialog(onDismiss: () -> Unit, onAdd: (String, String?) -> Unit) {
-    var origin by remember { mutableStateOf("") }
-    var issuer by remember { mutableStateOf("") }
+private fun AddProviderDialog(suggestedProvider: String, suggestedIssuer: String, onDismiss: () -> Unit, onAdd: (String, String?) -> Unit) {
+    var origin by remember { mutableStateOf(suggestedProvider) }
+    var issuer by remember { mutableStateOf(suggestedIssuer) }
     var consent by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints {
@@ -302,11 +364,16 @@ private fun AddProviderDialog(onDismiss: () -> Unit, onAdd: (String, String?) ->
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.provider_add), style = MaterialTheme.typography.headlineSmall)
-                    OutlinedTextField(origin, { if (it.length <= 512) origin = it }, Modifier.fillMaxWidth(),
-                        label = { Text(stringResource(R.string.provider_origin)) }, singleLine = true,
+                    // External labels can wrap at large text sizes without entering the field border.
+                    val originLabel = stringResource(R.string.provider_origin)
+                    Text(originLabel)
+                    OutlinedTextField(origin, { if (it.length <= 512) origin = it },
+                        Modifier.fillMaxWidth().semantics { contentDescription = originLabel }, singleLine = true,
                         keyboardOptions = urlKeyboard.copy(imeAction = ImeAction.Next))
-                    OutlinedTextField(issuer, { if (it.length <= 512) issuer = it }, Modifier.fillMaxWidth(),
-                        label = { Text(stringResource(R.string.provider_issuer)) }, singleLine = true,
+                    val issuerLabel = stringResource(R.string.provider_issuer)
+                    Text(issuerLabel)
+                    OutlinedTextField(issuer, { if (it.length <= 512) issuer = it },
+                        Modifier.fillMaxWidth().semantics { contentDescription = issuerLabel }, singleLine = true,
                         keyboardOptions = urlKeyboard.copy(imeAction = ImeAction.Done))
                     Text(stringResource(R.string.provider_consent))
                     Row(Modifier.fillMaxWidth().toggleable(consent, role = Role.Checkbox) { consent = it }.heightIn(min = 48.dp),

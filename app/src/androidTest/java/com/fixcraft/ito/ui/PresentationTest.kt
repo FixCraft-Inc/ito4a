@@ -66,7 +66,7 @@ class PresentationTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(night)) {
                 ItoTheme {
                     ConnectionStatus(ConnectionState(phase = ConnectionPhase.Connected), app.connections,
-                        SelectedRoute("Relay", "United States"), authorityReady = true, advanced = false,
+                        SelectedRoute("Relay", ServerPlace(null, "United States")), authorityReady = true, advanced = false,
                         setupHint = R.string.transport_idle)
                 }
             }
