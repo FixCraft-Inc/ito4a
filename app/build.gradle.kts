@@ -73,7 +73,6 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
-    packaging { jniLibs { keepDebugSymbols += "**/*.so" } }
     sourceSets {
         getByName("main") {
             kotlin.srcDir(if (providerFeatureEnabled) "src/providers/java" else "src/minimal/java")
@@ -125,7 +124,17 @@ dependencies {
 }
 
 val yumeRoot = providers.gradleProperty("itoYumeRoot").map(::file).getOrElse(rootProject.file("../../yume"))
+// The portable call core is its own repository, a sibling checkout as YUME is.
+val coreRoot = providers.gradleProperty("itoCoreRoot").map(::file).getOrElse(rootProject.file("../../ito"))
+val coreBuilder = coreRoot.resolve("tools/build_call_core.sh")
 val unverifiedSource = providers.gradleProperty("itoUnverifiedSource").orNull == "true"
+// Provenance records this commit, so a new one rebuilds even when no source changed.
+val coreHead = runCatching {
+    val process = ProcessBuilder("git", "-C", coreRoot.absolutePath, "rev-parse", "--verify", "HEAD")
+        .redirectError(ProcessBuilder.Redirect.DISCARD).start()
+    val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+    if (process.waitFor() == 0) output else "unknown"
+}.getOrDefault("unknown")
 val verifyYumeSource by tasks.registering {
     doLast {
         if (!unverifiedSource) {
@@ -134,7 +143,15 @@ val verifyYumeSource by tasks.registering {
         }
     }
 }
-tasks.named("preBuild") { dependsOn(verifyYumeSource) }
+val verifyCoreSource by tasks.registering {
+    doLast {
+        if (!unverifiedSource) {
+            val process = ProcessBuilder("bash", coreBuilder.absolutePath, "--verify-source-only").inheritIO().start()
+            check(process.waitFor() == 0) { "Call core verification failed" }
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn(verifyYumeSource, verifyCoreSource) }
 tasks.matching { it.name.matches(Regex("pre.*ReleaseBuild")) }.configureEach {
     doFirst { check(!unverifiedSource) { "Release requires verified YUME source" } }
 }
@@ -164,25 +181,29 @@ val buildYume by tasks.registering(Exec::class) {
     commandLine(args)
 }
 // The portable call core and its stock OpenSSL, built from the pinned archive
-// for each ABI. tools/build_call_core.sh checks the archive hash and the
-// library's exported surface and writes provenance.json.
+// for each ABI. The core's tools/build_call_core.sh checks the archive hash and
+// the library's exported surface and writes provenance.json.
 val openSslArchive = providers.gradleProperty("itoOpenSslArchive")
     .getOrElse("${System.getProperty("user.home")}/.cache/ito/openssl-3.5.9.tar.gz")
 val buildCallCore by tasks.registering(Exec::class) {
     val sdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: "/nonexistent-sdk"
     val abis = providers.gradleProperty("itoAbi").orNull ?: "arm64-v8a,x86_64"
-    inputs.file(rootProject.file("tools/build_call_core.sh"))
-    inputs.file(rootProject.file("tools/security-component.json"))
-    inputs.dir(rootProject.file("native/call/src"))
-    inputs.dir(rootProject.file("native/call/include"))
-    inputs.file(rootProject.file("native/call/CMakeLists.txt"))
+    dependsOn(verifyCoreSource)
+    inputs.file(coreBuilder)
+    inputs.file(coreRoot.resolve("tools/security-component.json"))
+    inputs.dir(coreRoot.resolve("call/src"))
+    inputs.dir(coreRoot.resolve("call/include"))
+    inputs.file(coreRoot.resolve("call/CMakeLists.txt"))
+    inputs.property("coreHead", coreHead)
+    inputs.property("unverified", unverifiedSource)
     inputs.file(openSslArchive)
     inputs.property("abis", abis)
     outputs.dir(layout.buildDirectory.dir("ito-call-core"))
-    val args = mutableListOf("bash", rootProject.file("tools/build_call_core.sh").absolutePath,
+    val args = mutableListOf("bash", coreBuilder.absolutePath,
         "--ndk", "$sdk/ndk/28.2.13676358", "--openssl-archive", openSslArchive,
         "--out", layout.buildDirectory.dir("ito-call-core").get().asFile.absolutePath, "--jobs", "4")
     abis.split(',').forEach { args += listOf("--abi", it) }
+    if (unverifiedSource) args += "--unverified-source"
     commandLine(args)
 }
 afterEvaluate {
@@ -203,6 +224,7 @@ abstract class GenerateItoDependencyNotices : DefaultTask() {
     @get:Input abstract val providersEnabled: Property<Boolean>
     @get:Input abstract val providerVersion: Property<String>
     @get:Input abstract val providerSourceSha256: Property<String>
+    @get:Input abstract val stripTool: Property<String>
     @get:Internal abstract val checkoutDirectory: DirectoryProperty
     @get:Internal abstract val nativeSourceDirectory: DirectoryProperty
     @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
@@ -216,7 +238,7 @@ abstract class GenerateItoDependencyNotices : DefaultTask() {
         if (providersEnabled.get()) metadata["providerIdentity"] = mapOf("version" to providerVersion.get(), "source_sha256" to providerSourceSha256.get())
         inventory.writeText(JsonOutput.toJson(metadata) + "\n")
         val generatorLog = temporaryDir.resolve("generator.log")
-        val process = ProcessBuilder("python3", generatorFile.get().asFile.absolutePath,
+        val command = mutableListOf("python3", generatorFile.get().asFile.absolutePath,
             "--root", checkoutDirectory.get().asFile.absolutePath,
             "--yume-root", nativeSourceDirectory.get().asFile.absolutePath,
             "--catalog", catalogFile.get().asFile.absolutePath,
@@ -224,7 +246,8 @@ abstract class GenerateItoDependencyNotices : DefaultTask() {
             "--native-provenance", nativeProvenance.get().asFile.absolutePath,
             "--call-provenance", callProvenance.get().asFile.absolutePath,
             "--output", outputDirectory.get().asFile.absolutePath)
-            .redirectErrorStream(true).redirectOutput(generatorLog).start()
+        stripTool.get().takeIf { it.isNotEmpty() }?.let { command += listOf("--strip-tool", it) }
+        val process = ProcessBuilder(command).redirectErrorStream(true).redirectOutput(generatorLog).start()
         if (!process.waitFor(120, TimeUnit.SECONDS)) {
             process.destroyForcibly()
             process.waitFor(5, TimeUnit.SECONDS)
@@ -236,6 +259,10 @@ abstract class GenerateItoDependencyNotices : DefaultTask() {
 }
 
 androidComponents.onVariants { variant ->
+    // Debug keeps native symbols for diagnosis. Release packages stripped libraries,
+    // and the notice generator hashes the same stripped bytes.
+    val debugBuild = variant.buildType == "debug"
+    if (debugBuild) variant.packaging.jniLibs.keepDebugSymbols.add("**/*.so")
     val runtime = configurations.named("${variant.name}RuntimeClasspath")
     val resolved = providers.provider { runtime.get().incoming.artifactView {
         componentFilter { it is ModuleComponentIdentifier }
@@ -266,6 +293,8 @@ androidComponents.onVariants { variant ->
             yumeRoot.resolve("third_party/nlohmann_json/PROVENANCE.md"))
         runtimeFiles.from(resolved.map { entries -> entries.map { it.file } })
         if (providerAar != null) runtimeFiles.from(providerAar)
+        stripTool.set(if (debugBuild) "" else (System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: "/nonexistent-sdk") +
+            "/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip")
         this.providersEnabled.set(providerFeatureEnabled)
         providerVersion.set(if (providerFeatureEnabled) providers.gradleProperty("yumeProviderVersion") else providers.provider { "" })
         providerSourceSha256.set(if (providerFeatureEnabled) providers.gradleProperty("yumeProviderSourceSha256") else providers.provider { "" })

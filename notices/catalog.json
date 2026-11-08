@@ -23,7 +23,17 @@
       "name": "Ito",
       "version": "source checkout",
       "license": "AGPL-3.0-or-later",
-      "role": "application, JNI adapters and call core",
+      "role": "application and JNI adapters",
+      "notices": [
+        "ITO-COPYRIGHT.txt",
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "Ito call core",
+      "version": "exact source commit in callIdentity",
+      "license": "AGPL-3.0-or-later",
+      "role": "portable call core, built from the ito repository",
       "notices": [
         "ITO-COPYRIGHT.txt",
         "LICENSE"
@@ -244,7 +254,7 @@
     },
     "THIRD_PARTY_LICENSES.md": {
       "path": "THIRD_PARTY_LICENSES.md",
-      "sha256": "1b8618fc01921e1e78a5c04988b98ba1b5ef3342dafaf69bcd9cd35ef2ad8d26",
+      "sha256": "2c179356026140ef4a670c71f6797dae8f2752f8b6268ffc9cdf4f8ff18e3465",
       "origin": "Ito application source THIRD_PARTY_LICENSES.md"
     },
     "Kotlin-1.9.22-NOTICE.txt": {

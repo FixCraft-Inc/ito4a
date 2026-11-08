@@ -176,7 +176,7 @@ It also retains the call core's admitted clock floor. Clock admission can
 publish this checkpoint even if the subsequent invitation operation fails.
 It does not change identity, contacts or spent records. No pending invitation
 PSK or monotonic deadline is restored from this snapshot. The exact clock
-rules and observation limits are in [calling security](CALL_SECURITY.md).
+rules and observation limits are in [calling security](https://github.com/FixCraft-Inc/ito/blob/main/docs/CALL_SECURITY.md).
 The core owns the plaintext format and every trust and replay rule. The store
 owns only sealing, publication and refusal. A separate non-exportable
 AES-256 Keystore key, `ito.identity.v1`, encrypts it with GCM, a fresh

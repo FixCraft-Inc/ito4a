@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -54,11 +55,25 @@ def provider_source(artifact: Path, coordinate: str, binding: dict) -> dict:
     return binding
 
 
-def call_core_libraries(catalog: dict, native: dict, call_path: Path) -> tuple[dict, dict]:
+def packaged_digest(library: Path, strip_tool: Path | None) -> str:
+    """The hash of the bytes the APK carries. A release build packages AGP's stripped copy."""
+    if strip_tool is None:
+        return sha256(regular_bytes(library))
+    with tempfile.TemporaryDirectory(prefix=".ito-strip-") as temporary:
+        stripped = Path(temporary) / library.name
+        subprocess.run([str(strip_tool), "--strip-unneeded", "-o", str(stripped), str(library)],
+                       check=True, capture_output=True, timeout=120)
+        return sha256(regular_bytes(stripped))
+
+
+def call_core_libraries(catalog: dict, native: dict, call_path: Path,
+                        strip_tool: Path | None) -> tuple[dict, dict]:
     """The call core's libraries, bound to its provenance and catalog pin."""
     call = json.loads(regular_bytes(call_path))
     if type(call.get("schema")) is not int or call["schema"] != 1:
         raise ValueError("Unsupported call core provenance schema")
+    if type(call.get("head")) is not str or type(call.get("unverified_test_source")) is not bool:
+        raise ValueError("Call core provenance has no source identity")
     pin = catalog["callCore"]
     if call["openssl_archive_sha256"] != pin["openssl_archive_sha256"]:
         raise ValueError("Call core OpenSSL changed: notice review required")
@@ -67,17 +82,19 @@ def call_core_libraries(catalog: dict, native: dict, call_path: Path) -> tuple[d
     libraries = {}
     for abi in native["abis"]:
         expected = call["libraries"][abi]
-        if sha256(regular_bytes(call_path.parent / abi / "libitocall.so")) != expected:
+        library = call_path.parent / abi / "libitocall.so"
+        if sha256(regular_bytes(library)) != expected:
             raise ValueError("Call core library differs from provenance")
-        libraries[f"lib/{abi}/libitocall.so"] = expected
-    identity = {"core_sources_sha256": call["core_sources_sha256"],
+        libraries[f"lib/{abi}/libitocall.so"] = packaged_digest(library, strip_tool)
+    identity = {"head": call["head"], "unverified_test_source": call["unverified_test_source"],
+                "core_sources_sha256": call["core_sources_sha256"],
                 "openssl_archive_sha256": call["openssl_archive_sha256"]}
     return libraries, identity
 
 
 def generate(root: Path, yume_root: Path, catalog_path: Path,
              artifacts_path: Path, provenance_path: Path, output: Path,
-             call_path: Path) -> dict:
+             call_path: Path, strip_tool: Path | None = None) -> dict:
     catalog = json.loads(regular_bytes(catalog_path))
     resolved = json.loads(regular_bytes(artifacts_path))
     native = json.loads(regular_bytes(provenance_path))
@@ -160,10 +177,10 @@ def generate(root: Path, yume_root: Path, catalog_path: Path,
         expected = native["artifacts"][library]
         if sha256(regular_bytes(provenance_path.parent / library)) != expected["sha256"]:
             raise ValueError("Native library differs from provenance")
-        native_libraries[f"lib/{library}"] = expected["sha256"]
+        native_libraries[f"lib/{library}"] = packaged_digest(provenance_path.parent / library, strip_tool)
         runtime = ndk / "toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib" / triplets[abi] / "libc++_shared.so"
-        native_libraries[f"lib/{abi}/libc++_shared.so"] = sha256(regular_bytes(runtime))
-    call_libraries, call_identity = call_core_libraries(catalog, native, call_path)
+        native_libraries[f"lib/{abi}/libc++_shared.so"] = packaged_digest(runtime, strip_tool)
+    call_libraries, call_identity = call_core_libraries(catalog, native, call_path, strip_tool)
     native_libraries.update(call_libraries)
     manifest = {"schema": 1, "callIdentity": call_identity, "nativeIdentity": {
         "head": native["head"], "inputs_sha256": native["inputs_sha256"],
@@ -202,11 +219,12 @@ def main() -> int:
     parser.add_argument("--native-provenance", required=True, type=Path)
     parser.add_argument("--call-provenance", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--strip-tool", type=Path, help="NDK llvm-strip, for a build that packages stripped libraries")
     args = parser.parse_args()
     try:
         result = generate(args.root, args.yume_root, args.catalog, args.artifacts,
-                          args.native_provenance, args.output, args.call_provenance)
-    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as error:
+                          args.native_provenance, args.output, args.call_provenance, args.strip_tool)
+    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
         print(f"Notice generation failed: {error}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2))

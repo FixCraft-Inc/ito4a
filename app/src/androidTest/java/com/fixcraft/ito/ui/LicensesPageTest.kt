@@ -27,6 +27,7 @@ class LicensesPageTest {
         compose.setContent { ItoTheme { SettingsPage(Preferences(), onLicenses = { opened++ }) } }
         compose.onNodeWithText(context.getString(R.string.about_license)).performScrollTo().assertExists()
         compose.onNodeWithText(SOURCE_URL.removePrefix("https://")).performScrollTo().assertExists()
+        compose.onNodeWithText(CORE_SOURCE_URL.removePrefix("https://")).performScrollTo().assertExists()
         compose.onNodeWithText(context.getString(R.string.about_licenses)).performScrollTo().performClick()
         compose.runOnIdle { assertEquals(1, opened) }
     }

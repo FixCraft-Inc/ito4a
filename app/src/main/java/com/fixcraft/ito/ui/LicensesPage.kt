@@ -26,8 +26,11 @@ import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Where this project's complete source is published. */
-internal const val SOURCE_URL = "https://github.com/FixCraft-Inc/Ito"
+/** Where this app's source is published. */
+internal const val SOURCE_URL = "https://github.com/FixCraft-Inc/ito4a"
+
+/** Where the call core this app builds on is published. */
+internal const val CORE_SOURCE_URL = "https://github.com/FixCraft-Inc/ito"
 
 /** The folder of notices that the build's verified generator puts in every APK. */
 private const val NOTICES = "notices"

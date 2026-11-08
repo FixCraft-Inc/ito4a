@@ -116,26 +116,26 @@ component with explicit identity/key ownership, negotiated capabilities,
 replay handling and independent vectors. The current YUME C ABI is not a
 complete media-encryption or application-identity API.
 
-The first [calling security contract](CALL_SECURITY.md) assigns local identity,
+The first [calling security contract](https://github.com/FixCraft-Inc/ito/blob/main/docs/CALL_SECURITY.md) assigns local identity,
 contact trust, confidential one-use invitations and channel-bound peer proofs
-to Ito. Its [component decision](SECURITY_COMPONENT.md) selects a maintained
-native TLS record channel. The [relay contract](CALL_RELAY.md) specifies the
+to Ito. Its [component decision](https://github.com/FixCraft-Inc/ito/blob/main/docs/SECURITY_COMPONENT.md) selects a maintained
+native TLS record channel. The [relay contract](https://github.com/FixCraft-Inc/ito/blob/main/docs/CALL_RELAY.md) specifies the
 separate authorized service ingress and opaque forwarding. The portable
-[call core](../native/call/README.md) implements the endpoint for the app and
+[call core](https://github.com/FixCraft-Inc/ito/blob/main/call/README.md) implements the endpoint for the app and
 the Linux `ito-call` peer. `CallBook` owns the identity and contacts,
 `CallController` runs one attempt on the connected run's stream, and calls
-carry authenticated DATA. The portable [content codec](CONTENT_CHANNEL.md)
+carry authenticated DATA. The portable [content codec](https://github.com/FixCraft-Inc/ito/blob/main/docs/CONTENT_CHANNEL.md)
 adds bounded Opus/chat envelopes above that DATA channel. Android's
 [foreground audio adapter](VOICE.md) owns microphone/playback, codecs, focus
 and routes. [App lock](APP_LOCK.md) guards new secret access, and
 [local content](LOCAL_CONTENT.md) owns encrypted bounded messages/history.
 The call core owns buffered DATA/END processing across orderly input EOF and
 keeps application backpressure within the bounds in
-[calling security](CALL_SECURITY.md). This lifecycle policy stays above YUME.
+[calling security](https://github.com/FixCraft-Inc/ito/blob/main/docs/CALL_SECURITY.md). This lifecycle policy stays above YUME.
 
 The call service joins two outbound client connections and forwards opaque
 bytes, which the endpoint will fill with encrypted media. It is separate
-application code in [relay/](../relay/README.md), a YUME module behind
+application code in [relay/](https://github.com/FixCraft-Inc/ito/blob/main/relay/README.md), a YUME module behind
 yumed's grant check, not an ability obtained merely by connecting two users to
 an ordinary yumed. It links no YUME library and holds no endpoint secret. YUME protects
 each client-to-service connection. Independent end-to-end encryption keeps

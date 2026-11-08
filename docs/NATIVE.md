@@ -107,17 +107,25 @@ staging session and permit are closed. See [provider ownership](PROVIDERS.md).
 
 ## Call core
 
-The [call core](../native/call/README.md) is a separate library,
-`libitocall.so`, with stock OpenSSL 3.5.9 linked inside it and hidden. Gradle's
-`buildCallCore` task runs `tools/build_call_core.sh`, which checks the pinned
-OpenSSL archive against `tools/security-component.json`, builds OpenSSL and
-the core for each selected ABI with NDK 28.2.13676358, refuses a library that
-exports anything but the C interface or imports an OpenSSL symbol, and records
-the archive, sources and libraries in `provenance.json`. `-PitoOpenSslArchive`
+The [call core](https://github.com/FixCraft-Inc/ito/blob/main/call/README.md) is a separate library,
+`libitocall.so`, with stock OpenSSL 3.5.9 linked inside it and hidden. It comes
+from the `ito` repository, a sibling checkout that `-PitoCoreRoot` names, by
+default `../../ito`. Each build first requires a clean checkout of a signed
+commit, which `-PitoUnverifiedSource=true` waives for debug tests. Gradle's
+`buildCallCore` task runs that checkout's `tools/build_call_core.sh`, which checks
+the pinned OpenSSL archive against its `tools/security-component.json`, builds
+OpenSSL and the core for each selected ABI with NDK 28.2.13676358, refuses a
+library that exports anything but the C interface or imports an OpenSSL symbol,
+and records the archive, sources, libraries and source commit in `provenance.json`. `-PitoOpenSslArchive`
 names the archive, by default `~/.cache/ito/openssl-3.5.9.tar.gz`.
 `app/src/main/jni/Android.mk` packages it beside `libyume.so`, and
 `libitojni.so` links both. The notice generator binds `libitocall.so` by that
 provenance, and a changed OpenSSL archive requires a catalog review.
+
+Debug builds package libraries with their symbols. Release builds package
+stripped ones, so the generator hashes the same `llvm-strip --strip-unneeded`
+output after checking each unstripped library against its provenance. The
+packaged-library check then holds in both.
 
 `app/src/main/cpp/ito_call_jni.cpp` adapts the C interface to
 `com.fixcraft.ito.call.CallNative`. Core statuses become values where Kotlin
@@ -140,7 +148,7 @@ can leave pending writes that the close aborts.
 The portable call owner retains bounded buffered TLS/frame input across orderly
 read EOF while application reads release backpressure. It keeps the original
 deadlines and immediate error/cancellation paths. EOF alone cannot supply an
-authenticated END; [calling security](CALL_SECURITY.md) owns that distinction.
+authenticated END; [calling security](https://github.com/FixCraft-Inc/ito/blob/main/docs/CALL_SECURITY.md) owns that distinction.
 Stopping the run, losing its Network or its provider authority ends the
 stream and so the call. A lane the run never serves, because it stopped first
 or its authority failed, is refused rather than left waiting. The adapter

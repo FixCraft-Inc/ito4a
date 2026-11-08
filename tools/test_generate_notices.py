@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -71,6 +72,7 @@ class NoticeGenerationTest(unittest.TestCase):
     def write_call_provenance(self, archive: str = "pinned-archive") -> None:
         self.call_provenance.write_text(json.dumps({
             "schema": 1, "ndk": "28.2.13676358", "openssl_archive_sha256": archive,
+            "head": "fixture-core-head", "unverified_test_source": False,
             "core_sources_sha256": "fixture-core-sources",
             "libraries": {"x86_64": digest(b"call core binary")},
         }))
@@ -192,6 +194,45 @@ class NoticeGenerationTest(unittest.TestCase):
         manifest = json.loads((self.output / "notices/manifest.json").read_text())
         self.assertEqual(manifest["nativeLibraries"]["lib/x86_64/libitocall.so"], digest(b"call core binary"))
         self.assertEqual(manifest["callIdentity"]["openssl_archive_sha256"], "pinned-archive")
+
+    def test_call_core_commit_is_recorded(self) -> None:
+        self.run_generator()
+        identity = json.loads((self.output / "notices/manifest.json").read_text())["callIdentity"]
+        self.assertEqual(identity["head"], "fixture-core-head")
+        self.assertIs(identity["unverified_test_source"], False)
+
+    def test_call_core_without_a_commit_refuses(self) -> None:
+        record = json.loads(self.call_provenance.read_text())
+        del record["head"]
+        self.call_provenance.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "no source identity"):
+            self.run_generator()
+
+    def fake_strip(self, body: str) -> Path:
+        tool = self.root / "fake-strip"
+        tool.write_text("#!/bin/sh\n" + body)
+        tool.chmod(0o755)
+        return tool
+
+    def test_release_inventory_hashes_the_stripped_bytes(self) -> None:
+        # Arguments are --strip-unneeded -o OUTPUT INPUT, as AGP runs the NDK's tool.
+        tool = self.fake_strip('[ "$1" = --strip-unneeded ] && [ "$2" = -o ] && { cat "$4"; printf stripped; } > "$3"\n')
+        generate(self.root, self.yume, self.catalog, self.resolved, self.provenance, self.output, self.call_provenance, tool)
+        libraries = json.loads((self.output / "notices/manifest.json").read_text())["nativeLibraries"]
+        self.assertEqual(libraries["lib/x86_64/libyume.so"], digest(b"core binarystripped"))
+        self.assertEqual(libraries["lib/x86_64/libitocall.so"], digest(b"call core binarystripped"))
+        self.assertEqual(libraries["lib/x86_64/libc++_shared.so"], digest(b"C++ runtime binarystripped"))
+
+    def test_release_still_refuses_a_library_that_differs_from_provenance(self) -> None:
+        (self.native / "x86_64/libyume.so").write_bytes(b"swapped")
+        tool = self.fake_strip('cat "$4" > "$3"\n')
+        with self.assertRaises(ValueError):
+            generate(self.root, self.yume, self.catalog, self.resolved, self.provenance, self.output, self.call_provenance, tool)
+
+    def test_failed_strip_refuses(self) -> None:
+        tool = self.fake_strip("exit 3\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            generate(self.root, self.yume, self.catalog, self.resolved, self.provenance, self.output, self.call_provenance, tool)
 
     def test_changed_call_library_refuses(self) -> None:
         (self.call / "x86_64/libitocall.so").write_bytes(b"other call binary")

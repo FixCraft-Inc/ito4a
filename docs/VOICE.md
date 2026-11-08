@@ -9,7 +9,7 @@ attempt. There is no PCM transmission or cryptographic fallback.
 
 The user first establishes the authenticated call and accepts the contact.
 Start audio requests microphone permission, starts a nonsticky microphone
-foreground service and negotiates [content envelope 1](CONTENT_CHANNEL.md).
+foreground service and negotiates [content envelope 1](https://github.com/FixCraft-Inc/ito/blob/main/docs/CONTENT_CHANNEL.md).
 Capture begins only when both HELLOs agree. Permission refusal starts no audio.
 Capture/playback setup, route or focus failure cancels the call. Incoming HELLO
 alone never starts microphone capture. Microphone mute replaces captured PCM

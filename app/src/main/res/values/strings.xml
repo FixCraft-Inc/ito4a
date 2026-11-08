@@ -231,7 +231,8 @@
     <string name="about_version">Version</string>
     <string name="about_license">Ito is free software under the GNU Affero General Public License, version 3 or later. It comes with no warranty.</string>
     <string name="about_licenses">Licenses</string>
-    <string name="about_source">Source code</string>
+    <string name="about_source">App source code</string>
+    <string name="about_core_source">Call core source code</string>
     <string name="licenses_description">Ito\'s license and the notices of the open-source components in this build.</string>
     <string name="notice_unreadable">This notice could not be opened.</string>
 </resources>

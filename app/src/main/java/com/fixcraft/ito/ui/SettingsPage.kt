@@ -37,7 +37,6 @@ import com.fixcraft.ito.domain.Presentation
 @Composable
 fun SettingsPage(preferences: Preferences, onPresentation: (Presentation) -> Unit = {},
                  lockEnabled: Boolean = false, onLock: () -> Unit = {}, onLicenses: () -> Unit = {}) {
-    val context = LocalContext.current
     PageColumn {
         SectionTitle(R.string.settings_privacy)
         // Turning the lock on or off starts platform authentication. The switch
@@ -62,12 +61,8 @@ fun SettingsPage(preferences: Preferences, onPresentation: (Presentation) -> Uni
         }
         SupportingText(R.string.about_license)
         TextButton(onClick = onLicenses) { Text(stringResource(R.string.about_licenses)) }
-        TextButton(onClick = {
-            try { context.startActivity(Intent(Intent.ACTION_VIEW, SOURCE_URL.toUri())) }
-            catch (_: ActivityNotFoundException) { /* No browser can open it. The address stays on screen. */ }
-        }) { Text(stringResource(R.string.about_source)) }
-        Text(SOURCE_URL.removePrefix("https://"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 12.dp))
+        SourceLink(R.string.about_source, SOURCE_URL)
+        SourceLink(R.string.about_core_source, CORE_SOURCE_URL)
     }
 }
 
@@ -85,6 +80,18 @@ private fun SwitchRow(@StringRes title: Int, @StringRes description: Int, checke
         }
         Switch(checked = checked, onCheckedChange = null)
     }
+}
+
+/** One place this build's source is published, with its address on screen in case no browser opens it. */
+@Composable
+private fun SourceLink(@StringRes label: Int, url: String) {
+    val context = LocalContext.current
+    TextButton(onClick = {
+        try { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
+        catch (_: ActivityNotFoundException) { /* The address stays on screen. */ }
+    }) { Text(stringResource(label)) }
+    Text(url.removePrefix("https://"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 12.dp))
 }
 
 /** A fixed fact about this version, read as a title and its value. */

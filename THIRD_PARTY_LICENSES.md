@@ -5,7 +5,7 @@ Ito's original application and JNI adapter use AGPL-3.0-or-later, copyright
 Third-party code retains its respective grants and attributions.
 
 Every built APK carries complete selected texts under `assets/notices/`, and
-Settings shows them under Licenses with the source address.
+Settings shows them under Licenses with the source addresses.
 Its `manifest.json` records the actual resolved runtime coordinates and
 artifact hashes, upstream notice origins, native source binding and packaged
 libyume/C++ runtime hashes. `notices/catalog.json` is the reviewed packaging
@@ -57,21 +57,22 @@ or app-data storage.
 
 ## Call core
 
-The [call core](native/call/README.md), `libitocall.so`, is Ito's own
-AGPL-3.0-or-later code. It statically links stock, unpatched OpenSSL 3.5.9
-under Apache-2.0, built from the release archive that
-`tools/security-component.json` pins by hash. Its `LICENSE.txt` is
+The [call core](https://github.com/FixCraft-Inc/ito/blob/main/call/README.md), `libitocall.so`, is Ito's own
+AGPL-3.0-or-later code from the
+[ito repository](https://github.com/FixCraft-Inc/ito). It statically links
+stock, unpatched OpenSSL 3.5.9 under Apache-2.0, built from the release archive
+that the core's `tools/security-component.json` pins by hash. Its `LICENSE.txt` is
 byte-identical to the OpenSSL text already packaged, and the release carries
 no separate NOTICE file. The notice manifest binds the packaged library to
-the core's `provenance.json`, and a different archive requires a catalog
+the core's `provenance.json`, including its source commit, and a different archive requires a catalog
 review. This copy of OpenSSL is separate from the patched 3.5.7 inside
 libyume, and neither library exports OpenSSL symbols.
 
 ## Call relay service
 
-The operator-side [relay](relay/README.md) is Ito's own AGPL-3.0-or-later
+The operator-side [relay](https://github.com/FixCraft-Inc/ito/blob/main/relay/README.md) is Ito's own AGPL-3.0-or-later
 code and links only the C++ standard library of the compiler that builds it.
-It is not part of the APK. Its yumed harness loads the operator's libyume and
+It lives in the ito repository and is not part of the APK. Its yumed harness loads the operator's libyume and
 YUME programs at test time and redistributes none of them.
 
 ## QR codes and the camera

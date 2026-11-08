@@ -8,4 +8,5 @@ local.properties
 *.aab
 *.jks
 *.keystore
+.release-signing.env
 .DS_Store

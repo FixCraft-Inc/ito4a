@@ -255,7 +255,7 @@ class CallClockTest {
         fun relay() = ByteArray(32) { 3 }
         fun peer() = hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
 
-        // Exact snapshot_1 from native/call/tests/vectors.txt. Its RFC 8032
+        // Exact snapshot_1 from the ito repository's call/tests/vectors.txt. Its RFC 8032
         // test identity trusts peer() and retains one different invitation's
         // spent record. These are published test keys, never app credentials.
         fun knownSnapshot() = hex(
