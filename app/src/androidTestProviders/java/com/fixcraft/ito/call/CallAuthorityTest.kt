@@ -136,8 +136,8 @@ class CallAuthorityTest {
             services.reload()
             withTimeout(10_000) { services.state.first { it.loaded } }
             val selection = requireNotNull(services.state.value.entries.single().selection)
-            services.select(selection)
-            withTimeout(10_000) { services.state.first { it.selection == selection && it.busy.isEmpty() } }
+            services.useProvider(selection.provider)
+            withTimeout(10_000) { services.state.first { it.selection?.provider == selection.provider && it.busy.isEmpty() } }
             withTimeout(10_000) { connections.state.first { it.phase == ConnectionPhase.Idle } }
             connections.refresh().join()
             val wifi = connections.state.value.networks.first { it.wifi }

@@ -244,7 +244,7 @@ fun AdvancedConnection(state: ConnectionState, controller: ConnectionController)
     val busy = state.phase in setOf(ConnectionPhase.Loading, ConnectionPhase.Starting, ConnectionPhase.Stopping)
     SectionHeading(R.string.technical_details)
     Text(stringResource(R.string.underlying_network), style = MaterialTheme.typography.titleMedium)
-    SupportingText(R.string.connection_network_policy)
+    SupportingTextWithInfo(R.string.connection_network_summary, R.string.underlying_network, R.string.connection_network_policy)
     ChoiceRow(stringResource(R.string.current_network), null, state.selectedNetwork == null, !busy) { controller.selectNetwork(null) }
     state.networks.forEach { network ->
         ChoiceRow(stringResource(R.string.network_choice, network.handle,
@@ -258,7 +258,7 @@ fun AdvancedConnection(state: ConnectionState, controller: ConnectionController)
     if (state.peer.isNotEmpty()) Text(stringResource(R.string.authenticated_peer, state.peer),
         style = MaterialTheme.typography.bodySmall)
     if (state.phase == ConnectionPhase.Connected) {
-        SupportingText(R.string.data_test_notice)
+        SupportingTextWithInfo(R.string.data_test_summary, R.string.data_test_title, R.string.data_test_notice)
         OutlinedTextField(destination, { destination = it }, Modifier.fillMaxWidth(),
             label = { Text(stringResource(R.string.test_destination)) }, singleLine = true)
         OutlinedTextField(port, { port = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.test_port)) },

@@ -8,8 +8,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fixcraft.ito.R
-import com.fixcraft.ito.integration.provisionProvider
-import com.fixcraft.ito.integration.selectProvider
+import com.fixcraft.ito.integration.chooseServer
+import com.fixcraft.ito.integration.useProvider
 import com.fixcraft.ito.provider.ItoProviderSession
 import com.fixcraft.ito.transport.ConnectionController
 import com.fixcraft.ito.transport.ConnectionState
@@ -39,8 +39,8 @@ fun ServiceConnectionPanel(connection: ConnectionState, connections: ConnectionC
                 }
             },
             catalog = services::catalog,
-            install = { provider, catalog, service, server -> connections.provisionProvider(services, provider, catalog, service, server) },
-            select = { connections.selectProvider(services, it) },
+            choose = { provider, service, server -> connections.chooseServer(services, provider, service, server) },
+            useProvider = { connections.useProvider(services, it) },
             cancel = services::cancel,
             remove = services::remove,
             code = services::submitCode,
@@ -57,10 +57,7 @@ internal fun ServiceConnectionPage(connection: ConnectionState, connections: Con
     // chosen provider was removed. Neither has no Connect and is never manual.
     val selection = state.selection.takeIf { !state.manual }
     val route = when {
-        selection != null -> {
-            val entry = state.entries.firstOrNull { it.provider == selection.provider }
-            SelectedRoute(selection.label, serverPlace(entry?.server?.country))
-        }
+        selection != null -> selection.choice?.server?.let { SelectedRoute(it.label, serverPlace(it.country)) }
         state.manual -> manualRoute(connection)
         else -> null
     }

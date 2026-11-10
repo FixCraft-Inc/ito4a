@@ -11,8 +11,9 @@
     <string name="provider_unregistered">Browser sign-in is unavailable in this build. A verified application registration is required.</string>
     <string name="provider_busy">Working…</string>
     <string name="provider_servers">Load servers</string>
+    <string name="provider_servers_show">Show servers in %1$s</string>
+    <string name="provider_servers_hide">Hide servers in %1$s</string>
     <string name="provider_no_entitlement">No servers are available yet. Ask the provider for access.</string>
-    <string name="provider_replace_requires_remove">To use another server from this service, remove it and add it again.</string>
     <string name="provider_select">Use this server</string>
     <string name="provider_remove">Remove service</string>
     <string name="provider_remove_notice">Remove local access for %1$s, even when offline. This stops its active connection. Account deletion and remote revocation are separate.</string>
@@ -31,9 +32,6 @@
     <string name="provider_sign_in_note">Opens %1$s in your browser. Your password stays there.</string>
     <string name="provider_choose_server">Choose a server</string>
     <string name="provider_refresh_servers">Refresh servers</string>
-    <string name="provider_access_until">Access until %1$s.</string>
-    <string name="provider_access_renew">Access until %1$s. Ito renews it automatically.</string>
-    <string name="provider_access_ended">Access ended. It renews when you connect.</string>
     <string name="provider_location_unknown">Location not given</string>
     <string name="provider_error_unauthorized">Sign in again to continue.</string>
     <string name="provider_error_not_entitled">Your account does not include this server.</string>
@@ -44,6 +42,8 @@
     <string name="provider_error_storage">Ito could not read or save provider data on this phone.</string>
     <string name="provider_error_rate_limited">Too many attempts. Wait a few minutes, then try again.</string>
     <string name="provider_error_binding">The provider\'s details did not match. Remove it and add it again.</string>
+    <string name="provider_error_link_unverified">Android has not confirmed Ito\'s sign-in link yet. Make sure “Open supported links” is on for Ito, then try again in a few minutes. If it keeps failing, reinstall Ito.</string>
+    <string name="provider_link_settings">Open link settings</string>
     <string name="provider_error_revoked">Access ended. Choose your server again.</string>
     <string name="provider_error_timeout">Sign-in took too long. Try again.</string>
     <string name="provider_error_conflict">Another change is still in progress. Try again shortly.</string>

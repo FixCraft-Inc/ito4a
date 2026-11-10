@@ -1,8 +1,10 @@
 package com.fixcraft.ito.ui
 
+import android.content.ActivityNotFoundException
 import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -36,11 +39,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -56,19 +61,19 @@ import androidx.compose.ui.window.DialogProperties
 import com.fixcraft.ito.BuildConfig
 import com.fixcraft.ito.R
 import com.fixcraft.yume.consumer.ServiceEntry
-import com.fixcraft.yume.consumer.ServiceSelection
 import com.fixcraft.yume.consumer.ServiceUiState
+import com.fixcraft.yume.provider.ProviderAppLinks
 import com.fixcraft.yume.provider.ProviderCodec
-import java.text.DateFormat
-import java.util.Date
 
 /** What the panel can ask of the shared controller. The page supplies it, and only the controller changes enrollment. */
 class ServiceActions(
     val add: (String, String?) -> Unit,
     val authorize: (String) -> Unit,
     val catalog: (String) -> Unit,
-    val install: (String, ProviderCodec.Catalog, String, String) -> Unit,
-    val select: (ServiceSelection) -> Unit,
+    /** Provider, service and server: records the choice, without the network. */
+    val choose: (String, String, String) -> Unit,
+    /** Selects a provider's route with the server already chosen for it. */
+    val useProvider: (String) -> Unit,
     val cancel: (String) -> Unit,
     val remove: (String) -> Unit,
     val code: (String, CharArray) -> Unit,
@@ -99,7 +104,10 @@ fun ProviderPanel(state: ServiceUiState, actions: ServiceActions, advanced: Bool
         }
     }
     if (state.loaded && state.entries.isEmpty()) SupportingText(R.string.provider_scope)
-    state.error?.let { Text(stringResource(providerMessage(it), it), color = MaterialTheme.colorScheme.error) }
+    state.error?.let {
+        Text(stringResource(providerMessage(it), it), color = MaterialTheme.colorScheme.error)
+        if (it == "link_unverified") LinkSettingsButton()
+    }
     if (state.removed) SupportingText(R.string.provider_removed)
     if (suggestion != null) SuggestedProvider(suggestion, suggestedIssuer, busy = suggestion in state.busy,
         onContinue = { actions.add(suggestion, suggestedIssuer.ifEmpty { null }) }, onOther = { adding = true })
@@ -161,7 +169,6 @@ private fun ServiceRow(entry: ServiceEntry, state: ServiceUiState, actions: Serv
     val pending = state.authorizing == entry.provider
     val inUse = !state.manual && state.selection?.provider == entry.provider
     val canAskForServers = entry.issuer == null || entry.authorized
-    val access = grantAccess(entry, System.currentTimeMillis() / 1000)
     OutlinedCard(Modifier.fillMaxWidth(), border = if (inUse) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder()) {
         Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {
@@ -198,13 +205,9 @@ private fun ServiceRow(entry: ServiceEntry, state: ServiceUiState, actions: Serv
                 } else SupportingText(R.string.provider_unregistered)
             }
             if (canAskForServers) ServerChoice(entry, state.catalogs[entry.provider], inUse, advanced, busy, actions)
-            // A suspended row already says what to do, and a lease cannot open until then.
-            if (!entry.suspended) {
-                access?.let { GrantAccessText(it, entry.expiresAt) }
-                val installed = entry.selection
-                if (installed != null && !inUse && !busy) Button(onClick = { actions.select(installed) },
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.provider_select)) }
-            }
+            // A suspended row already says what to do. Leases renew on their own, so their times stay out of the card.
+            if (!entry.suspended && entry.choice != null && !inUse && !busy) Button(onClick = { actions.useProvider(entry.provider) },
+                modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.provider_select)) }
         }
     }
 }
@@ -243,45 +246,88 @@ private fun LabeledValue(@StringRes label: Int, value: String) {
 }
 
 /**
- * Lists the account's servers by place and name. Choosing one requests a device
- * lease and selects it. An installed choice cannot silently move to another
- * server. Choosing it again renews its lease once that is allowed.
+ * Lists the account's servers by place, one row per country. A country with
+ * several servers opens into its list. Choosing a server only records the
+ * choice: the lease is requested when the relay connects, and a running relay
+ * moves to the new server at once.
  */
 @Composable
 private fun ServerChoice(entry: ServiceEntry, catalog: ProviderCodec.Catalog?, inUse: Boolean, advanced: Boolean, busy: Boolean, actions: ServiceActions) {
-    val installed = entry.selection
+    val chosen = entry.choice
     if (catalog == null) {
-        // The list is not loaded yet, but the installed server is known from the last one.
-        val server = entry.server
-        if (installed != null && server != null) ServerRow(server.country, installed.label, server.host, server.port, advanced, inUse, enabled = false) {}
-        // With a server installed, the list is a refresh and Connect stays the next step.
-        if (installed == null || entry.suspended) Button(onClick = { actions.catalog(entry.provider) }, enabled = !busy,
+        // The list is not loaded yet, but the chosen server is known from the last one.
+        if (chosen != null) ServerRow(chosen.server.country, chosen.server.label, chosen.server.host, chosen.server.port, advanced, inUse,
+            enabled = false, showPlace = true) {}
+        // With a server chosen, the list is a refresh and Connect stays the next step.
+        if (chosen == null || entry.suspended) Button(onClick = { actions.catalog(entry.provider) }, enabled = !busy,
             modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.provider_servers)) }
         else TextButton(onClick = { actions.catalog(entry.provider) }, enabled = !busy) { Text(stringResource(R.string.provider_servers)) }
         return
     }
-    val servers = catalog.services.flatMap { service -> service.servers.map { service to it } }
+    val servers = catalog.services.flatMap { service -> service.servers.map { service.id to it } }
     if (servers.isEmpty()) SupportingText(R.string.provider_no_entitlement)
-    if (installed == null && servers.isNotEmpty()) Text(stringResource(R.string.provider_choose_server), style = MaterialTheme.typography.titleSmall)
-    servers.forEach { (service, server) ->
-        val current = installed?.service == service.id && installed.server == server.id
-        ServerRow(server.country, server.label, server.host, server.port, advanced, current && inUse, enabled = !busy && (installed == null || current)) {
-            // Decided at the tap: the screen may have been open since the lease could renew.
-            val renew = current && grantAccess(entry, System.currentTimeMillis() / 1000) != GrantAccess.Active
-            when {
-                !current || renew -> actions.install(entry.provider, catalog, service.id, server.id)
-                !inUse -> actions.select(installed)
+    if (chosen == null && servers.isNotEmpty()) Text(stringResource(R.string.provider_choose_server), style = MaterialTheme.typography.titleSmall)
+    fun isChosen(choice: Pair<String, ProviderCodec.Server>) = chosen?.service == choice.first && chosen.server.id == choice.second.id
+    // Groups by country in order of first appearance. Servers without a country form one group.
+    servers.indices.groupBy { servers[it].second.country }.forEach { (country, indices) ->
+        key(country) {
+            val members = indices.map { servers[it] }
+            fun choose(member: Pair<String, ProviderCodec.Server>) = actions.choose(entry.provider, member.first, member.second.id)
+            if (members.size == 1) {
+                val member = members.single()
+                ServerOption(member.second, advanced, isChosen(member), inUse, busy, showPlace = true) { choose(member) }
+            } else {
+                var expanded by remember { mutableStateOf(members.any(::isChosen)) }
+                CountryRow(country, expanded) { expanded = !expanded }
+                if (expanded) Column(Modifier.padding(start = 40.dp)) {
+                    members.forEach { member -> ServerOption(member.second, advanced, isChosen(member), inUse, busy, showPlace = false) { choose(member) } }
+                }
             }
         }
     }
-    if (installed != null && servers.size > 1) SupportingText(R.string.provider_replace_requires_remove)
+}
+
+/** One server in the list. Choosing the server already in use does nothing. */
+@Composable
+private fun ServerOption(server: ProviderCodec.Server, advanced: Boolean, chosen: Boolean, inUse: Boolean, busy: Boolean,
+                         showPlace: Boolean, onChoose: () -> Unit) {
+    ServerRow(server.country, server.label, server.host, server.port, advanced, chosen && inUse, enabled = !busy, showPlace = showPlace) {
+        if (!chosen || !inUse) onChoose()
+    }
+}
+
+/** A country with several servers: its flag and name, opening into the list. */
+@Composable
+private fun CountryRow(country: String?, expanded: Boolean, onToggle: () -> Unit) {
+    val place = serverPlace(country)
+    val name = place.name ?: stringResource(R.string.provider_location_unknown)
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .clickable(onClickLabel = stringResource(if (expanded) R.string.provider_servers_hide else R.string.provider_servers_show, name),
+                role = Role.Button, onClick = onToggle)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Box(Modifier.size(24.dp))
+        LocationMark(place)
+        Text(name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+        Icon(painterResource(if (expanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more), null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable
-private fun ServerRow(country: String?, label: String, host: String, port: Int, advanced: Boolean, selected: Boolean, enabled: Boolean, onSelect: () -> Unit) {
-    val place = serverPlace(country)
-    ChoiceRow(place.name ?: stringResource(R.string.provider_location_unknown),
-        if (advanced) "$label\n$host:$port" else label, selected, enabled, place, onSelect)
+private fun ServerRow(country: String?, label: String, host: String, port: Int, advanced: Boolean, selected: Boolean, enabled: Boolean,
+                      showPlace: Boolean, onSelect: () -> Unit) {
+    val address = "$host:$port".takeIf { advanced }
+    // Inside an opened country the country is already said, so the server's own name leads.
+    if (!showPlace) ChoiceRow(label, address, selected, enabled, null, onSelect)
+    else {
+        val place = serverPlace(country)
+        ChoiceRow(place.name ?: stringResource(R.string.provider_location_unknown),
+            if (advanced) "$label\n$address" else label, selected, enabled, place, onSelect)
+    }
 }
 
 /** The provider and its issuer are distinct identities, so each keeps its own label even when the origins match. */
@@ -310,6 +356,16 @@ private fun DetailFact(@StringRes label: Int, value: String) {
     }
 }
 
+/** Opens Android's link settings for Ito, where link handling can be turned on. */
+@Composable
+private fun LinkSettingsButton() {
+    val context = LocalContext.current
+    TextButton(onClick = {
+        try { context.startActivity(ProviderAppLinks.settingsIntent(context)) }
+        catch (_: ActivityNotFoundException) { }
+    }) { Text(stringResource(R.string.provider_link_settings)) }
+}
+
 @StringRes
 private fun providerMessage(code: String): Int = when (code) {
     "unauthorized" -> R.string.provider_error_unauthorized
@@ -321,6 +377,7 @@ private fun providerMessage(code: String): Int = when (code) {
     "storage", "state" -> R.string.provider_error_storage
     "rate_limited" -> R.string.provider_error_rate_limited
     "binding", "malformed" -> R.string.provider_error_binding
+    "link_unverified" -> R.string.provider_error_link_unverified
     "revoked" -> R.string.provider_error_revoked
     "timeout" -> R.string.provider_error_timeout
     "conflict" -> R.string.provider_error_conflict
@@ -333,17 +390,6 @@ private fun host(origin: String) = origin.removePrefix("https://")
 private val urlKeyboard = KeyboardOptions(KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = KeyboardType.Uri)
 
 /** Leases last up to an hour, so the row says when this one ends and how to renew it. */
-@Composable
-private fun GrantAccessText(access: GrantAccess, expiresAt: Long?) {
-    val time = expiresAt?.let { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it * 1000)) }
-    when {
-        access == GrantAccess.Ended -> SupportingText(R.string.provider_access_ended)
-        time == null -> Unit
-        access == GrantAccess.Renewable -> SupportingText(stringResource(R.string.provider_access_renew, time))
-        else -> SupportingText(stringResource(R.string.provider_access_until, time))
-    }
-}
-
 @Composable
 private fun SupportingText(text: String) {
     Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

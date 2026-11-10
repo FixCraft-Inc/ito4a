@@ -39,9 +39,11 @@ import com.fixcraft.ito.transport.ConnectionPhase
 import com.fixcraft.ito.transport.RequiresI1Fixture
 import com.fixcraft.ito.transport.nativebridge.ItoNative
 import com.fixcraft.yume.consumer.CodePrompt
+import com.fixcraft.yume.consumer.ServiceRoute
 import com.fixcraft.yume.consumer.ServiceSelection
 import com.fixcraft.yume.provider.ProviderAppLinks
 import com.fixcraft.yume.provider.ProviderBundleCodec
+import com.fixcraft.yume.provider.ProviderCodec
 import com.fixcraft.yume.provider.ProviderRegistration
 import java.io.File
 import java.io.IOException
@@ -146,7 +148,7 @@ class ProviderLiveIntegrationTest {
         await { services.state.value.busy.isEmpty() &&
             (services.state.value.catalogs[alpha] != catalog || services.state.value.error != null) }
         assertNull(services.state.value.error)
-        assertEquals(alphaInitial, services.state.value.selection)
+        assertEquals(alphaInitial.provider, services.state.value.selection?.provider)
         assertEquals(originalRun, state.generation)
         data("alpha-after-api-refresh", alpha)
         checks.put("API expiry and refresh preserve the separate live transport lease")
@@ -164,7 +166,7 @@ class ProviderLiveIntegrationTest {
         await { state.phase == ConnectionPhase.Failed }
         stoppedOwners()
         assertEquals(revokedGeneration, state.generation)
-        assertEquals(alphaCurrent, services.state.value.selection)
+        assertEquals(alphaCurrent.provider, services.state.value.selection?.provider)
         assertTrue(state.failure in setOf(ConnectionFailure.Native, ConnectionFailure.Provider))
         write("revocation.json", stateEvidence().put("live_endpoint_closed", true))
         stop()
@@ -173,7 +175,7 @@ class ProviderLiveIntegrationTest {
         assertTrue(state.failure in setOf(ConnectionFailure.Native, ConnectionFailure.Provider))
         assertTrue(state.receipts.isEmpty())
         stoppedOwners()
-        assertEquals(alphaCurrent, services.state.value.selection)
+        assertEquals(alphaCurrent.provider, services.state.value.selection?.provider)
         write("revoked-readmission.json", stateEvidence().put("no_fallback", true))
         stop()
         remove(alpha)
@@ -187,9 +189,12 @@ class ProviderLiveIntegrationTest {
         data("beta-after-alpha-revoke", beta)
         stop()
         mark("modified-selection-control")
-        instrumentation.runOnMainSync { services.select(betaCurrent.copy(host = "unauthorized.example")) }
-        await { services.state.value.busy.isEmpty() && services.state.value.error == "binding" }
-        assertEquals(betaCurrent, services.state.value.selection)
+        // A binding the held grant does not match cannot open, whatever the screen selects.
+        runBlocking {
+            try { services.open(betaCurrent.copy(host = "unauthorized.example")).close(); throw AssertionError("Modified binding opened") }
+            catch (refused: ProviderCodec.Refusal) { assertEquals("binding", refused.code) }
+        }
+        assertEquals(betaCurrent.provider, services.state.value.selection?.provider)
         assertEquals(betaCurrent, selection(beta))
         assertEquals(ConnectionPhase.Idle, state.phase)
         stoppedOwners()
@@ -202,7 +207,7 @@ class ProviderLiveIntegrationTest {
         checks.put("two providers, manual ciphertext and routing preferences retain independent authority")
         gates.put("provider_isolation", true).put("exact_catalog_selection", true)
         write("restart.json", JSONObject().put("pid", Process.myPid()).put("manual", manual)
-            .put("manual_snapshot_sha256", manualBefore).put("selection", JSONObject(betaCurrent.encode())))
+            .put("manual_snapshot_sha256", manualBefore).put("selection", JSONObject(ServiceRoute(betaCurrent.provider, betaCurrent.epoch, "relay", null).encode())))
         write("i2-result.json", stateEvidence().put("passed", true).put("gates", gates).put("checks", checks).put("receipts", receipts))
     }
 
@@ -210,9 +215,10 @@ class ProviderLiveIntegrationTest {
         config
         val previous = JSONObject(File(handoff, "restart.json").readText())
         assertNotEquals(previous.getInt("pid"), Process.myPid())
-        val selected = ServiceSelection.decode(previous.getJSONObject("selection").toString())
+        val route = requireNotNull(ServiceRoute.decode(previous.getJSONObject("selection").toString()))
         await { services.state.value.loaded && state.phase == ConnectionPhase.Idle }
-        assertEquals(selected, services.state.value.selection)
+        assertEquals(route, services.state.value.selection?.copy(choice = null))
+        val selected = selection(route.provider)
         assertFalse(services.state.value.manual)
         stoppedOwners()
         navigate()
@@ -236,7 +242,7 @@ class ProviderLiveIntegrationTest {
         assertEquals("revoked", state.providerCode)
         assertEquals(0, state.nativeCode)
         assertEquals(invalidatedRun, state.generation)
-        assertEquals(selected, services.state.value.selection)
+        assertEquals(selected.provider, services.state.value.selection?.provider)
         assertFalse(services.state.value.manual)
         assertEquals(before, state.receipts)
         stoppedOwners()
@@ -254,11 +260,12 @@ class ProviderLiveIntegrationTest {
         config
         val previous = JSONObject(File(handoff, "restart.json").readText())
         assertNotEquals(previous.getInt("pid"), Process.myPid())
-        val selected = ServiceSelection.decode(previous.getJSONObject("selection").toString())
+        val route = requireNotNull(ServiceRoute.decode(previous.getJSONObject("selection").toString()))
         val manual = previous.getString("manual")
         mark("after-process-death")
         await { services.state.value.loaded && state.phase == ConnectionPhase.Idle }
-        assertEquals(selected, services.state.value.selection)
+        assertEquals(route, services.state.value.selection?.copy(choice = null))
+        val selected = selection(route.provider)
         assertFalse(services.state.value.manual)
         assertNull(services.state.value.authorizing)
         assertNull(services.state.value.codePrompt)
@@ -283,7 +290,7 @@ class ProviderLiveIntegrationTest {
         // deadline; native CLOSED can therefore precede local permit expiry.
         assertTrue((state.failure == ConnectionFailure.Native && state.nativeCode == -12 && state.providerCode.isEmpty()) ||
             (state.failure == ConnectionFailure.Provider && state.providerCode == "revoked" && state.nativeCode == 0))
-        assertEquals(selected, services.state.value.selection)
+        assertEquals(selected.provider, services.state.value.selection?.provider)
         assertEquals(expiringRun, state.generation)
         assertFalse(services.state.value.manual)
         assertEquals(beforeExpiry, state.receipts)
@@ -296,7 +303,7 @@ class ProviderLiveIntegrationTest {
         host("offline-beta", provider = beta, selected = selected)
         remove(beta)
         assertTrue(services.state.value.entries.isEmpty())
-        assertEquals(selected, services.state.value.selection)
+        assertEquals(selected.provider, services.state.value.selection?.provider)
         assertFalse(services.state.value.manual)
         click(R.string.connect_transport)
         await { state.phase == ConnectionPhase.Failed }
@@ -375,7 +382,10 @@ class ProviderLiveIntegrationTest {
         val catalog = services.state.value.catalogs.getValue(provider)
         assertEquals(1, catalog.services.size)
         assertEquals(1, catalog.services.single().servers.size)
+        // Choosing is local. Connect fetches the grant, its kit and the opening code.
         visible(hasText(catalog.services.single().servers.single().label) and hasClickAction()).performClick()
+        await { services.state.value.selection?.provider == provider && services.state.value.busy.isEmpty() }
+        click(R.string.connect_transport)
         await { services.state.value.codePrompt?.provider == provider }
         val prompt = requireNotNull(services.state.value.codePrompt)
         host("opening-code", provider = provider, prompt = prompt)
@@ -389,17 +399,21 @@ class ProviderLiveIntegrationTest {
             catch (_: AssertionError) { throw AssertionError("Provider opening-code entry failed") }
             click(R.string.save)
         } finally { code.fill('\u0000') }
-        await { services.state.value.codePrompt == null && services.state.value.busy.isEmpty() }
+        await { services.state.value.codePrompt == null && state.phase in setOf(ConnectionPhase.Connected, ConnectionPhase.Failed) }
         if (wrongCode) {
+            assertEquals(ConnectionPhase.Failed, state.phase)
+            stop()
             assertNotNull(services.state.value.error)
             assertNull(services.state.value.entries.single { it.provider == provider }.selection)
             stoppedOwners()
             write("wrong-opening-code.json", stateEvidence().put("refused", true).put("no_publication", true))
             return
         }
+        assertEquals(ConnectionPhase.Connected, state.phase)
+        stop()
         assertNull(services.state.value.error)
         val selected = selection(provider)
-        assertEquals(selected, services.state.value.selection)
+        assertEquals(selected.provider, services.state.value.selection?.provider)
         val expected = JSONObject(File(handoff, "${prompt.grant}.json").readText())
         assertEquals(expected.getString("client_identity"), selected.identity)
         assertEquals(expected.getString("server_key_sha256"), selected.serverKey)
@@ -451,19 +465,20 @@ class ProviderLiveIntegrationTest {
         stoppedOwners()
     }
 
+    /** A connected relay renews at half its lease: it prepares a fresh grant while serving, then reconnects with it. */
     private fun rotate(previous: ServiceSelection): ServiceSelection {
         val run = state.generation
         assertEquals(ConnectionPhase.Connected, state.phase)
-        assertEquals(previous, services.state.value.selection)
-        provision(previous.provider)
-        await { state.phase == ConnectionPhase.Failed }
-        assertEquals(run, state.generation)
-        assertEquals(ConnectionFailure.Provider, state.failure)
-        stoppedOwners()
+        assertEquals(previous.provider, services.state.value.selection?.provider)
+        val renewAt = requireNotNull(services.renewAfter(previous))
+        val deadline = SystemClock.elapsedRealtime() + (renewAt - System.currentTimeMillis() / 1000 + 90).coerceAtLeast(30) * 1000
+        while ((selection(previous.provider).grant == previous.grant || state.generation == run || state.phase != ConnectionPhase.Connected) &&
+            SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(250)
         val replacement = selection(previous.provider)
         assertNotEquals(previous.grant, replacement.grant)
         assertNotEquals(previous.identity, replacement.identity)
         assertEquals(previous.copy(grant = replacement.grant, identity = replacement.identity), replacement)
+        assertEquals(ConnectionPhase.Connected, state.phase)
         write("rotation-${if (previous.provider == alpha) "alpha" else "beta"}.json", stateEvidence()
             .put("old_grant", previous.grant).put("new_grant", replacement.grant).put("passed", true))
         stop()
@@ -474,8 +489,10 @@ class ProviderLiveIntegrationTest {
 
     private fun connect(selection: ServiceSelection?, manual: String? = null) {
         if (selection != null) {
-            within(selection.provider, R.string.provider_select)
-            await { services.state.value.selection == selection && services.state.value.busy.isEmpty() && state.phase == ConnectionPhase.Idle }
+            if (services.state.value.manual || services.state.value.selection?.provider != selection.provider) {
+                within(selection.provider, R.string.provider_select)
+            }
+            await { services.state.value.selection?.provider == selection.provider && services.state.value.busy.isEmpty() && state.phase == ConnectionPhase.Idle }
         } else {
             assertTrue(services.state.value.manual)
             assertEquals(manual, state.catalog.selectedId)
@@ -633,7 +650,7 @@ class ProviderLiveIntegrationTest {
             when (resource) {
                 R.string.provider_sign_in -> row.issuer != null && !row.authorized
                 R.string.provider_servers -> state.catalogs[row.provider] == null && (row.issuer == null || row.authorized)
-                R.string.provider_select -> row.selection != null && (state.manual || state.selection?.provider != row.provider)
+                R.string.provider_select -> row.choice != null && (state.manual || state.selection?.provider != row.provider)
                 else -> true
             }
         }

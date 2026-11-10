@@ -90,7 +90,7 @@ python3 /path/to/yume4a/tools/provider_source_manifest.py --root "$ito_provider_
 # Set this to the reviewed manifest’s source_sha256 value.
 ito_provider_sha=REVIEWED_SHA256
 ./gradlew --no-daemon --max-workers=2 -PitoYumeRoot=/path/to/yume -PitoCoreRoot=/path/to/ito \
-  -PitoProviders=true -PitoProviderRoot="$ito_provider_root" -PyumeProviderVersion=0.4.0 \
+  -PitoProviders=true -PitoProviderRoot="$ito_provider_root" -PyumeProviderVersion=0.5.0 \
   -PyumeProviderSourceSha256="$ito_provider_sha" \
   :provider-library:testDebugUnitTest :provider-library:lintDebug \
   :app:testDebugUnitTest :app:assembleDebug :app:lintDebug

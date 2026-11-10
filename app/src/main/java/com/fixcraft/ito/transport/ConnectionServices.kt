@@ -5,12 +5,22 @@ import java.io.File
 /** Application authority presented to the transport owner. No enrollment types cross this seam. */
 interface ConnectionServices {
     fun selectManual()
-    fun selectedForRestart(): SelectedService?
+    /** The selected provider route, or null for manual use. It is not authority until [prepare]. */
+    fun selectedForRestart(): ChosenRoute?
+    /**
+     * Acquires the route's lease for its chosen server. A current lease is
+     * returned without the network. A starting run ([renew] false) takes a live
+     * lease even once it is due, so a blocked provider API cannot stop it, and a
+     * running one renews it. A renewal that fails for now returns the live lease.
+     */
+    suspend fun prepare(route: ChosenRoute, renew: Boolean): SelectedService
     suspend fun open(selection: SelectedService): OpenedService
     /** UTC seconds after which [selection]'s lease renews without a person, or null if it never does. */
     fun renewAfter(selection: SelectedService): Long?
-    /** Renews [selection]'s lease on its server. Its old connection ends, so the caller reconnects with the result. */
-    suspend fun renew(selection: SelectedService): SelectedService
+}
+
+interface ChosenRoute {
+    val provider: String
 }
 
 interface SelectedService {

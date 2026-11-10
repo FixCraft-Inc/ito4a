@@ -38,7 +38,7 @@ class ProviderAppLinksQualificationTest {
         if (expected == "enabled") ProviderAppLinks.verify(context, registration)
         else {
             try { ProviderAppLinks.verify(context, registration); fail("Disabled association accepted") }
-            catch (refusal: ProviderCodec.Refusal) { assertEquals("binding", refusal.code) }
+            catch (refusal: ProviderCodec.Refusal) { assertEquals("link_unverified", refusal.code) }
         }
     }
 }

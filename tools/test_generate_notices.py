@@ -84,7 +84,7 @@ class NoticeGenerationTest(unittest.TestCase):
     def add_provider(self, *, altered_entry: bool = False, wrong_binding: bool = False) -> None:
         entry = {"mode": 0o644, "sha256": digest(b"provider source"), "size": 15}
         source = digest(f"src/main/Provider.kt\0{entry['mode']}\0{entry['sha256']}\n".encode())
-        provenance = {"schema": 1, "component": "com.fixcraft.yume:provider-library", "version": "0.4.0",
+        provenance = {"schema": 1, "component": "com.fixcraft.yume:provider-library", "version": "0.5.0",
                       "source_sha256": source, "files": {"src/main/Provider.kt": entry}}
         if altered_entry:
             entry["sha256"] = "f" * 64
@@ -92,15 +92,15 @@ class NoticeGenerationTest(unittest.TestCase):
         with zipfile.ZipFile(artifact, "w") as archive:
             archive.writestr("assets/provider-library/provenance.json", json.dumps(provenance))
         resolved = json.loads(self.resolved.read_text())
-        resolved["artifacts"].append({"coordinate": "com.fixcraft.yume:provider-library:0.4.0", "path": str(artifact)})
-        resolved["providerIdentity"] = {"version": "0.4.0", "source_sha256": "e" * 64 if wrong_binding else source}
+        resolved["artifacts"].append({"coordinate": "com.fixcraft.yume:provider-library:0.5.0", "path": str(artifact)})
+        resolved["providerIdentity"] = {"version": "0.5.0", "source_sha256": "e" * 64 if wrong_binding else source}
         self.resolved.write_text(json.dumps(resolved))
 
     def test_provider_source_aar_keeps_exact_runtime_hash_and_source_binding(self) -> None:
         self.add_provider()
         self.run_generator()
         result = json.loads((self.output / "notices/manifest.json").read_text())
-        self.assertEqual(result["providerIdentity"]["version"], "0.4.0")
+        self.assertEqual(result["providerIdentity"]["version"], "0.5.0")
         provider = next(item for item in result["artifacts"] if item["coordinate"].startswith("com.fixcraft.yume:"))
         self.assertEqual(provider["sha256"], digest((self.root / "provider-library.aar").read_bytes()))
 

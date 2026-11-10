@@ -3,6 +3,7 @@ package com.fixcraft.ito.integration
 import android.content.Context
 import com.fixcraft.ito.transport.ConnectionServices
 import com.fixcraft.ito.transport.OpenedService
+import com.fixcraft.ito.transport.ChosenRoute
 import com.fixcraft.ito.transport.SelectedService
 import com.fixcraft.ito.transport.ServiceRefusal
 import java.io.File
@@ -15,14 +16,14 @@ class MinimalServices(private val retainedState: () -> Boolean, private val requ
     fun reload() = Unit
     override fun close() = Unit
     override fun selectManual() { requireAccess(); manualChosen = true }
-    override fun selectedForRestart(): SelectedService? {
+    override fun selectedForRestart(): ChosenRoute? {
         requireAccess()
         if (!manualChosen && retainedState()) throw ServiceRefusal("providers_disabled")
         return null
     }
     override suspend fun open(selection: SelectedService): OpenedService = throw ServiceRefusal("providers_disabled")
+    override suspend fun prepare(route: ChosenRoute, renew: Boolean): SelectedService = throw ServiceRefusal("providers_disabled")
     override fun renewAfter(selection: SelectedService): Long? = null
-    override suspend fun renew(selection: SelectedService): SelectedService = throw ServiceRefusal("providers_disabled")
 }
 
 fun createServices(context: Context, requireAccess: () -> Unit = {},

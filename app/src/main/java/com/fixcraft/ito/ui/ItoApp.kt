@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -244,6 +245,37 @@ internal fun PageColumn(content: @Composable ColumnScope.() -> Unit) {
 @Composable
 internal fun SupportingText(@StringRes text: Int) {
     Text(stringResource(text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/**
+ * One short line kept on screen, with the rest of its explanation behind an info button.
+ * A warning at a decision stays fully visible instead.
+ */
+@Composable
+internal fun SupportingTextWithInfo(@StringRes text: Int, @StringRes title: Int, @StringRes info: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f, fill = false)) { SupportingText(text) }
+        InfoButton(title, info)
+    }
+}
+
+/** A button that shows [text] in a dialog titled [title]. */
+@Composable
+internal fun InfoButton(@StringRes title: Int, @StringRes text: Int) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val heading = stringResource(title)
+    // Drawn in a 32 dp box so the line keeps the height of its text.
+    // Compose still extends the touch target to the minimum 48 dp.
+    IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) {
+        Icon(painterResource(R.drawable.ic_info), contentDescription = stringResource(R.string.more_about, heading),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (open) AlertDialog(
+        onDismissRequest = { open = false },
+        title = { Text(heading) },
+        text = { Text(stringResource(text), Modifier.verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodyMedium) },
+        confirmButton = { TextButton(onClick = { open = false }) { Text(stringResource(R.string.done)) } },
+    )
 }
 
 /** A section heading within a page. The page title itself is in the top bar. */

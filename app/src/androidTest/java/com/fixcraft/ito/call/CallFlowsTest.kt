@@ -23,11 +23,13 @@ import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.then
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isHeading
 import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.isSelectable
@@ -91,6 +93,17 @@ class CallFlowsTest {
         val book = app.callBook
         await { book.state.value is BookState.Ready }
         assertTrue("the test needs a fresh install", (book.state.value as BookState.Ready).identity == null)
+        // The explanation's first line stays on screen. The rest opens from its info button.
+        compose.waitUntil(5000) { exists(hasText(text(R.string.create_identity_summary))) }
+        assertFalse(exists(hasText(text(R.string.create_identity_description))))
+        val info = context.getString(R.string.more_about, text(R.string.create_identity_title))
+        compose.onNode(hasContentDescription(info) and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5000) { exists(hasText(text(R.string.create_identity_description))) }
+        // The dialog is its own window, outside the page's scroll container.
+        compose.onNode(hasText(text(R.string.done)) and hasClickAction() and hasAnyAncestor(isDialog()))
+            .performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitForIdle()
+        assertFalse(exists(hasText(text(R.string.create_identity_description))))
         click(text(R.string.create_identity))
         waitForContacts()
         val own = (book.state.value as BookState.Ready).identity!!

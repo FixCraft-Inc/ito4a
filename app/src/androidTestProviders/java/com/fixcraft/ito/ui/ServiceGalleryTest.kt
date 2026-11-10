@@ -26,7 +26,9 @@ import com.fixcraft.ito.transport.store.ConfigurationCatalog
 import com.fixcraft.ito.transport.store.ConfigurationMetadata
 import com.fixcraft.yume.consumer.CodePrompt
 import com.fixcraft.yume.consumer.ServiceEntry
+import com.fixcraft.yume.consumer.ServiceRoute
 import com.fixcraft.yume.consumer.ServiceSelection
+import com.fixcraft.yume.provider.ProviderClient
 import com.fixcraft.yume.consumer.ServiceUiState
 import com.fixcraft.yume.provider.ProviderCodec
 import org.junit.Rule
@@ -49,7 +51,7 @@ class ServiceGalleryTest {
     private var connection by mutableStateOf(ConnectionState(phase = ConnectionPhase.Idle))
     private var services by mutableStateOf(ServiceUiState())
     private var advanced by mutableStateOf(false)
-    private val nothing = ServiceActions(add = { _, _ -> }, authorize = {}, catalog = {}, install = { _, _, _, _ -> }, select = {},
+    private val nothing = ServiceActions(add = { _, _ -> }, authorize = {}, catalog = {}, choose = { _, _, _ -> }, useProvider = {},
         cancel = {}, remove = {}, code = { _, code -> code.fill('\u0000') })
 
     private fun show() = compose.setContent {
@@ -67,7 +69,14 @@ class ServiceGalleryTest {
 
     private fun signedIn(selection: ServiceSelection?, renewAfter: Long? = FUTURE, expiresAt: Long? = FUTURE + 1800, suspended: Boolean = false) =
         ServiceEntry(PROVIDER, LABEL, ISSUER, selection, expiresAt.takeIf { selection != null }, suspended, authorized = true,
-            server = JAPAN.takeIf { selection != null }, renewAfter = renewAfter.takeIf { selection != null })
+            server = JAPAN.takeIf { selection != null }, renewAfter = renewAfter.takeIf { selection != null },
+            choice = selection?.let(::choiceOf))
+
+    /** The selected route a held grant belongs to, as the controller publishes it. */
+    private fun routeOf(selection: ServiceSelection) = ServiceRoute(PROVIDER, EPOCH, "relay", choiceOf(selection))
+
+    private fun choiceOf(selection: ServiceSelection) =
+        ProviderClient.Choice(selection.service, listOf(JAPAN, STATES, UNKNOWN).first { it.id == selection.server })
 
     private fun signedOut(issuer: String? = ISSUER, label: String = LABEL) = ServiceEntry(PROVIDER, label, issuer, null, null, false)
 
@@ -75,7 +84,6 @@ class ServiceGalleryTest {
         show()
         val base = ServiceUiState(loaded = true, browserRegistered = true)
         val chosen = selection(JAPAN)
-        val now = System.currentTimeMillis() / 1000
         val frames = listOf(
             "empty" to base.copy(manual = true),
             "signed-out" to base.copy(entries = listOf(signedOut())),
@@ -90,14 +98,12 @@ class ServiceGalleryTest {
             "servers-unselected" to base.copy(entries = listOf(signedIn(null)), catalogs = mapOf(PROVIDER to CATALOG)),
             "servers-unknown-country" to base.copy(entries = listOf(signedIn(null)), catalogs = mapOf(PROVIDER to CATALOG_UNKNOWN)),
             "server-provisioning" to base.copy(entries = listOf(signedIn(null)), catalogs = mapOf(PROVIDER to CATALOG), busy = setOf(PROVIDER)),
-            "server-selected" to base.copy(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = chosen),
-            "server-selected-no-list" to base.copy(entries = listOf(signedIn(chosen)), selection = chosen),
+            "server-selected" to base.copy(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = routeOf(chosen)),
+            "server-selected-no-list" to base.copy(entries = listOf(signedIn(chosen)), selection = routeOf(chosen)),
             "server-installed-not-in-use" to base.copy(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), manual = true),
-            "lease-renewal-due" to base.copy(entries = listOf(signedIn(chosen, renewAfter = now - 60, expiresAt = now + 600)), catalogs = mapOf(PROVIDER to CATALOG), selection = chosen),
-            "lease-expired" to base.copy(entries = listOf(signedIn(chosen, renewAfter = now - 3600, expiresAt = now - 60)), catalogs = mapOf(PROVIDER to CATALOG), selection = chosen),
-            "suspended" to base.copy(entries = listOf(signedIn(chosen, suspended = true)), selection = chosen),
+            "suspended" to base.copy(entries = listOf(signedIn(chosen, suspended = true)), selection = routeOf(chosen)),
             "error-unauthorized" to base.copy(entries = listOf(signedOut()), error = "unauthorized"),
-            "error-unavailable" to base.copy(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = chosen, error = "unavailable"),
+            "error-unavailable" to base.copy(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = routeOf(chosen), error = "unavailable"),
             "removed" to base.copy(removed = true),
             "code-prompt" to base.copy(entries = listOf(signedOut(issuer = null)), codePrompt = CodePrompt("example", PROVIDER, "example-grant")),
         )
@@ -120,7 +126,7 @@ class ServiceGalleryTest {
     @Test fun dialogs() {
         show()
         val chosen = selection(JAPAN)
-        services = ServiceUiState(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = chosen, loaded = true, browserRegistered = true)
+        services = ServiceUiState(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = routeOf(chosen), loaded = true, browserRegistered = true)
         val menu = hasContentDescription(context.getString(R.string.provider_more, LABEL)) and hasClickAction()
         compose.onNode(menu).performScrollTo().performClick()
         capture.frame("dialog-service-menu", scroll = false)
@@ -143,7 +149,7 @@ class ServiceGalleryTest {
     @Test fun connection() {
         show()
         val chosen = selection(JAPAN)
-        services = ServiceUiState(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = chosen, loaded = true, browserRegistered = true)
+        services = ServiceUiState(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = routeOf(chosen), loaded = true, browserRegistered = true)
         for ((name, state) in listOf(
             "starting" to ConnectionState(phase = ConnectionPhase.Starting),
             "connected" to ConnectionState(phase = ConnectionPhase.Connected, peer = "ab".repeat(32)),
@@ -171,7 +177,7 @@ class ServiceGalleryTest {
         show()
         advanced = true
         val chosen = selection(JAPAN)
-        services = ServiceUiState(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = chosen, loaded = true, browserRegistered = true)
+        services = ServiceUiState(entries = listOf(signedIn(chosen)), catalogs = mapOf(PROVIDER to CATALOG), selection = routeOf(chosen), loaded = true, browserRegistered = true)
         connection = ConnectionState(phase = ConnectionPhase.Connected, peer = "ab".repeat(32),
             networks = listOf(NetworkChoice(101, wifi = true, metered = false), NetworkChoice(102, wifi = false, metered = true)))
         capture.frame("service-advanced-connected")

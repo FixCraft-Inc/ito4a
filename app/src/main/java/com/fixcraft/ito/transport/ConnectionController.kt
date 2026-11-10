@@ -121,7 +121,8 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     private class RunCleanupFailure(val failure: ConnectionFailure, val nativeCode: Int = 0)
     private class RunNetworkLost : Exception()
     /** The lease reached its renewal time while no call was in progress. */
-    private class RenewalDue : Exception()
+    /** A renewed lease is ready, so the run reconnects with it. */
+    private class RenewalDue(val next: SelectedService) : Exception()
     private class NetworkMonitorUnavailable : Exception()
     private data class Probe(val packet: Boolean, val service: String, val host: String, val port: Int)
 
@@ -159,9 +160,15 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         reload()
     }
     /** Serializes an explicit application authority change with native teardown. */
-    fun changeAuthority(provider: String? = null, action: suspend () -> Unit) = command {
+    /**
+     * Runs [action], which changes service authority. A run on another provider
+     * stops first. With [move], a run on [provider] reconnects afterwards, so a
+     * newly chosen server takes effect at once.
+     */
+    fun changeAuthority(provider: String? = null, move: Boolean = false, action: suspend () -> Unit) = command {
         if (provider == null || current?.provider != provider) stopRun()
         action()
+        if (move && provider != null && current?.provider == provider) startRun()
     }
 
     fun selectNetwork(handle: Long?) = command {
@@ -264,20 +271,18 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     fun connect() = command { startRun() }
 
     /** Reconnects on a renewed lease, unless a later Connect or Stop replaced [previous]. */
-    private fun reconnectRenewed(previous: Run) = command {
-        if (current === previous) startRun()
+    private fun reconnectRenewed(previous: Run, next: SelectedService) = command {
+        if (current === previous) startRun(next)
     }
 
-    private suspend fun startRun() {
+    /** [prepared] is a lease the previous run already renewed for the same route. */
+    private suspend fun startRun(prepared: SelectedService? = null) {
         stopRun()
         val stored = withContext(Dispatchers.IO) { services?.selectedForRestart() }
-        // A lease past its renewal time renews first, so coming back after an hour just connects.
-        val provider = stored?.let { selection ->
-            val due = withContext(Dispatchers.IO) { requireNotNull(services).renewAfter(selection) }
-            if (due == null || System.currentTimeMillis() / 1000 < due) selection else {
-                mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Starting, failure = ConnectionFailure.None)
-                withContext(Dispatchers.IO) { requireNotNull(services).renew(selection) }
-            }
+        // The chosen server's lease is acquired here, or renewed once due, so coming back after an hour just connects.
+        val provider = prepared?.takeIf { stored?.provider == it.provider } ?: stored?.let { route ->
+            mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Starting, failure = ConnectionFailure.None)
+            withContext(Dispatchers.IO) { requireNotNull(services).prepare(route, renew = false) }
         }
         val selected = if (provider == null) withContext(Dispatchers.IO) { store.list().selectedId }
             ?: throw IllegalArgumentException() else null
@@ -288,7 +293,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
             nativeCode = 0, providerCode = "", peer = "", generation = run.generation, boundSockets = 0, receipts = emptyList())
         // A network callback may request Stop as soon as it is registered.
         // Publish the job before its worker can install those callbacks.
-        run.job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) { execute(run, selected, provider) }
+        run.job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) { execute(run, selected, provider, stored) }
         run.job.start()
     }
 
@@ -341,7 +346,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         } finally { ItoNative.closeCallStream(stream) }
     }
 
-    private suspend fun execute(run: Run, selected: String?, provider: SelectedService?) {
+    private suspend fun execute(run: Run, selected: String?, provider: SelectedService?, serviceRoute: ChosenRoute?) {
         var callback: ConnectivityManager.NetworkCallback? = null
         var callbackRegistered = false
         var defaultCallback: ConnectivityManager.NetworkCallback? = null
@@ -424,7 +429,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                     if (permit?.valid() == false) throw ServiceRefusal("revoked")
                 }
                 checkAuthority()
-                val renewAt = provider?.let { requireNotNull(services).renewAfter(it) }
+                var renewAt = provider?.let { requireNotNull(services).renewAfter(it) }
                 val description = ManualConfiguration.describe(config)
                 requireCapturedNetwork(run)
                 val address = resolve(run.network, description.dialAddress ?: description.host)
@@ -464,8 +469,13 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                 while (!run.stopped.get()) {
                     requireCapturedNetwork(run)
                     checkAuthority()
-                    // A call holds this loop in serveLane, so renewal waits for it to end.
-                    if (renewAt != null && System.currentTimeMillis() / 1000 >= renewAt) throw RenewalDue()
+                    // A call holds this loop in serveLane, so renewal waits for it to end. The next
+                    // lease is prepared while this one serves, and the run moves only once it exists.
+                    if (renewAt != null && System.currentTimeMillis() / 1000 >= renewAt) {
+                        val next = requireNotNull(services).prepare(requireNotNull(serviceRoute), renew = true)
+                        if (next.identity != requireNotNull(provider).identity) throw RenewalDue(next)
+                        renewAt = requireNotNull(services).renewAfter(next)
+                    }
                     currentCoroutineContext().ensureActive()
                     val status = ItoNative.status(run.handle)
                     if (status.session != ItoNative.ACTIVE || status.sessions != 1L) {
@@ -509,9 +519,8 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                         } finally { response.bytes.fill(0); response.peerFingerprint.fill(0) }
                     } finally { payload.fill(0) }
                 }
-        } catch (_: RenewalDue) {
-            // The provider ends the old grant before issuing the next, so reconnect.
-            reconnectRenewed(run)
+        } catch (renewed: RenewalDue) {
+            reconnectRenewed(run, renewed.next)
         } catch (_: RunNetworkLost) {
             // The network stop owner publishes after joining all native borrowers.
         } catch (_: NetworkMonitorUnavailable) {

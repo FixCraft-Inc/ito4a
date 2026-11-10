@@ -4,7 +4,7 @@ With `-PitoProviders=true`, Ito uses the independent `provider-library` source p
 single protocol contract is yume4a’s `docs/PROVIDERS.md`; the reusable library’s
 `README.md` owns its interfaces and version. Ito supplies encrypted storage,
 public-libyume validation, connection lifetime and UI adapters. Neither
-application links the other application. Library version 0.4.0, provider wire
+application links the other application. Library version 0.5.0, provider wire
 version 1 and the experimental libyume ABI have independent version axes.
 
 ## Enrollment and authority
@@ -88,15 +88,15 @@ borrower, destroys its handle, then closes the credential session and permit.
 A new connection requires an explicit action and a valid exact lease.
 
 A lease lasts as long as the provider grants, which can be as short as an
-hour. The service row shows when it ends. Ito renews it on its own: Connect
-renews a due or expired lease first, and a connection reconnects on a renewed
-lease once renewal is allowed and no call is in progress. A call that outlasts
-its lease still ends with it, because the provider closes the old grant before
-issuing the next. Choosing the same server again also renews a due, ended or
-suspended lease. Before that, choosing it does nothing. When the issuer or
-provider refuses the sign-in itself, the shared client forgets the tokens and
-their grant. The row then reads Signed out and offers Sign in with browser,
-followed by a fresh server choice.
+hour. Ito renews it on its own, so the card does not show its times. Choosing a
+server only records it; Connect acquires its lease, a starting connection uses
+any live lease at once, and a running relay reconnects to a newly chosen server.
+At half its lease a running relay prepares a fresh grant while it still serves
+and reconnects only once that grant exists, never during a call. A call that
+outlasts the lease still ends with it. When the issuer or provider refuses the
+sign-in itself, the shared client forgets the tokens and their grants. The row
+then reads Signed out and offers Sign in with browser; afterwards Connect
+acquires a fresh grant for the same chosen server.
 
 ## Removal and manual use
 
@@ -133,7 +133,7 @@ delete or rewrite provider credentials.
 
 Use `-PitoProviders=true` and
 `-PitoProviderRoot=/absolute/path/to/yume4a/provider-library` with the exact
-reviewed source content. The build requires library version 0.4.0. For an
+reviewed source content. The build requires library version 0.5.0. For an
 explicit registration, provide both `-PitoProviderClientId=...` and
 `-PitoProviderCallback=https://HOST/ito/oauth/callback`. The callback host must
 publish the actual APK package/signer association. Partial or malformed

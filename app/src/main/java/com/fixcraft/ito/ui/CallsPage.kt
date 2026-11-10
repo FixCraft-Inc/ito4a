@@ -230,7 +230,7 @@ internal fun CreateIdentity(model: CallsModel) = PageColumn {
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Icon(painterResource(R.drawable.ic_ito), null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
         Heading(R.string.create_identity_title)
-        SupportingText(R.string.create_identity_description)
+        SupportingTextWithInfo(R.string.create_identity_summary, R.string.create_identity_title, R.string.create_identity_description)
         Button(onClick = model::createIdentity, modifier = Modifier.heightIn(min = 48.dp)) {
             Text(stringResource(R.string.create_identity))
         }

@@ -7,6 +7,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -16,13 +17,15 @@ import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isNotSelected
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.fixcraft.ito.R
 import com.fixcraft.yume.consumer.ServiceEntry
-import com.fixcraft.yume.consumer.ServiceSelection
+import com.fixcraft.yume.consumer.ServiceRoute
+import com.fixcraft.yume.provider.ProviderClient
 import com.fixcraft.yume.consumer.ServiceUiState
 import com.fixcraft.yume.provider.ProviderCodec
 import org.junit.Assert.assertEquals
@@ -43,12 +46,12 @@ class ProviderPanelTest {
     private val added = mutableListOf<Pair<String, String?>>()
     private val authorized = mutableListOf<String>()
     private val catalogs = mutableListOf<String>()
-    private val installed = mutableListOf<String>()
-    private val selected = mutableListOf<ServiceSelection>()
+    private val chosen = mutableListOf<String>()
+    private val used = mutableListOf<String>()
     private val cancelled = mutableListOf<String>()
     private val removed = mutableListOf<String>()
     private val actions = ServiceActions(add = { origin, issuer -> added += origin to issuer }, authorize = { authorized += it }, catalog = { catalogs += it },
-        install = { _, _, _, server -> installed += server }, select = { selected += it }, cancel = { cancelled += it }, remove = { removed += it },
+        choose = { _, _, server -> chosen += server }, useProvider = { used += it }, cancel = { cancelled += it }, remove = { removed += it },
         code = { _, code -> code.fill('\u0000') })
     private lateinit var state: MutableState<ServiceUiState>
 
@@ -66,14 +69,16 @@ class ProviderPanelTest {
     private val signedOut = ServiceEntry(PROVIDER, "Synthetic operator", ISSUER, null, null, false)
     private val signedIn = signedOut.copy(authorized = true)
     private val base = ServiceUiState(loaded = true, browserRegistered = true)
-    private val choice = ServiceSelection(PROVIDER, "00000000-0000-4000-8000-000000000001", "device", "relay", "jp", "grant",
-        "a".repeat(64), "b".repeat(64), "jp1.operator.example", 443, "JP1 relay", "relay")
-    private fun catalog(country: String? = "JP") = ProviderCodec.Catalog(PROVIDER, "device", "$PROVIDER/provider/v1", 1_800_000_000, 1_800_000_300,
-        listOf(ProviderCodec.Service("relay", "Relay", "relay", emptyList(), listOf(
+    private fun catalog(country: String? = "JP", second: Boolean = false) = ProviderCodec.Catalog(PROVIDER, "device", "$PROVIDER/provider/v1",
+        1_800_000_000, 1_800_000_300,
+        listOf(ProviderCodec.Service("relay", "Relay", "relay", emptyList(), listOfNotNull(
             ProviderCodec.Server("jp", "JP1 relay", "jp1.operator.example", 443, "b".repeat(64), country),
+            ProviderCodec.Server("jp2", "JP2 relay", "jp2.operator.example", 443, "d".repeat(64), country).takeIf { second },
             ProviderCodec.Server("us", "US2 relay", "us2.operator.example", 443, "c".repeat(64), "US"),
         ))))
-    private fun installedEntry(renewAfter: Long = FAR) = signedIn.copy(selection = choice, expiresAt = FAR, renewAfter = renewAfter, server = catalog().services[0].servers[0])
+    private val choice = ProviderClient.Choice("relay", catalog().services[0].servers[0])
+    private val route = ServiceRoute(PROVIDER, "00000000-0000-4000-8000-000000000001", "relay", choice)
+    private val chosenEntry = signedIn.copy(choice = choice)
 
     private fun openMenu() = compose.onNode(hasContentDescription(context.getString(R.string.provider_more, signedOut.label))).performClick()
 
@@ -122,18 +127,26 @@ class ProviderPanelTest {
         assertEquals(1, compose.onAllNodes(hasText(ISSUER)).fetchSemanticsNodes().size)
     }
 
-    @Test fun anInstalledServerStaysUntilTheServiceIsRemoved() {
-        render(base.copy(entries = listOf(installedEntry()), catalogs = mapOf(PROVIDER to catalog()), selection = choice))
-        compose.onNode(hasText("United States") and isNotSelected()).performClick()
+    @Test fun anotherServerCanBeChosenWithoutRemovingTheService() {
+        render(base.copy(entries = listOf(chosenEntry), catalogs = mapOf(PROVIDER to catalog()), selection = route))
         compose.onNode(hasText("Japan") and isSelected()).performClick()
-        compose.runOnIdle { assertTrue(installed.isEmpty()) }
-        compose.onNodeWithText(text(R.string.provider_replace_requires_remove)).assertExists()
+        compose.runOnIdle { assertTrue(chosen.isEmpty()) }
+        compose.onNode(hasText("United States") and isNotSelected()).performClick()
+        compose.runOnIdle { assertEquals(listOf("us"), chosen) }
     }
 
-    @Test fun aDueLeaseRenewsThroughItsInstalledServer() {
-        render(base.copy(entries = listOf(installedEntry(renewAfter = 1)), catalogs = mapOf(PROVIDER to catalog()), selection = choice))
-        compose.onNode(hasText("Japan") and isSelected()).performClick()
-        compose.runOnIdle { assertEquals(listOf("jp"), installed) }
+    @Test fun aCountryWithSeveralServersOpensIntoItsList() {
+        render(base.copy(entries = listOf(signedIn), catalogs = mapOf(PROVIDER to catalog(second = true))))
+        compose.onNodeWithText("JP2 relay").assertDoesNotExist()
+        compose.onNode(hasText("Japan") and hasClickAction()).performClick()
+        compose.onNodeWithText("JP2 relay").performClick()
+        compose.runOnIdle { assertEquals(listOf("jp2"), chosen) }
+    }
+
+    @Test fun aChosenServiceNotInUseOffersToUseIt() {
+        render(base.copy(entries = listOf(chosenEntry), manual = true))
+        compose.onNodeWithText(text(R.string.provider_select)).performClick()
+        compose.runOnIdle { assertEquals(listOf(PROVIDER), used) }
     }
 
     @Test fun removalNeedsConfirmation() {
@@ -158,9 +171,18 @@ class ProviderPanelTest {
         compose.onNodeWithText(text(R.string.provider_location_unknown)).assertExists()
     }
 
+    /** Only an unverified sign-in link offers Android's link settings, next to its own message. */
+    @Test fun anUnverifiedSignInLinkOffersLinkSettings() {
+        render(base.copy(error = "binding"))
+        compose.onNodeWithText(text(R.string.provider_error_binding)).assertExists()
+        compose.onAllNodesWithText(text(R.string.provider_link_settings)).assertCountEquals(0)
+        compose.runOnIdle { state.value = state.value.copy(error = "link_unverified") }
+        compose.onNodeWithText(text(R.string.provider_error_link_unverified)).assertExists()
+        compose.onNodeWithText(text(R.string.provider_link_settings)).assertExists()
+    }
+
     private companion object {
         const val PROVIDER = "https://operator.example"
         const val ISSUER = "https://issuer.example"
-        const val FAR = 4_102_444_800L
     }
 }
