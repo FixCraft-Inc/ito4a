@@ -49,6 +49,15 @@
       ]
     },
     {
+      "name": "flag-icons",
+      "version": "7.6.0",
+      "license": "MIT",
+      "role": "country flag art in the shared provider library",
+      "notices": [
+        "flag-icons-MIT.txt"
+      ]
+    },
+    {
       "name": "YUME",
       "version": "exact source HEAD and content binding in nativeIdentity",
       "license": "AGPL-3.0-or-later",
@@ -254,7 +263,7 @@
     },
     "THIRD_PARTY_LICENSES.md": {
       "path": "THIRD_PARTY_LICENSES.md",
-      "sha256": "2c179356026140ef4a670c71f6797dae8f2752f8b6268ffc9cdf4f8ff18e3465",
+      "sha256": "e841b278e1b34bec46b0d59a826f3a83a919cf4ff322595134ab13f9ffb38941",
       "origin": "Ito application source THIRD_PARTY_LICENSES.md"
     },
     "Kotlin-1.9.22-NOTICE.txt": {
@@ -281,6 +290,11 @@
       "path": "notices/texts/ZXing-NOTICE.txt",
       "sha256": "4db4b60aace29ec6c5c4f13ca9cac1930d3c0c54bcc67dceead0c10771120e66",
       "origin": "https://raw.githubusercontent.com/zxing/zxing/zxing-3.5.4/NOTICE"
+    },
+    "flag-icons-MIT.txt": {
+      "path": "notices/texts/flag-icons-MIT.txt",
+      "sha256": "8f1195d55a2fd315a07d812328470ca9ba2abb78c8d317ff19619d5125e00cea",
+      "origin": "https://registry.npmjs.org/flag-icons/-/flag-icons-7.6.0.tgz!/package/LICENSE"
     }
   },
   "artifacts": {

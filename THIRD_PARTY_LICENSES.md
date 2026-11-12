@@ -18,13 +18,16 @@ library under AGPL-3.0-or-later. Its source
 version and full source aggregate are recorded in the notice manifest's
 `providerIdentity` and `assets/provider-library/provenance.json`. The generator
 checks the resolved source AAR's provenance and records its exact AAR hash.
+Its country flags are flag-icons 7.6.0 art under the MIT license, packaged as
+`flag-icons-MIT.txt`.
 AppAuth for Android 0.11.1 uses Apache-2.0. Its complete upstream license is
 packaged as `AppAuth-LICENSE.txt` alongside the reviewed coroutines texts.
 Its AndroidX browser, AppCompat, fragment and widget dependencies retain their
 resolved versions. Their exact Google Maven artifacts and Apache-2.0 grants
 are reviewed in the catalog, without changing versions to match another app.
-The default minimal build excludes this library and AppAuth. Its notice manifest
-sets `providersEnabled` to false and omits their artifacts and source claim.
+The default minimal build excludes this library, its flags and AppAuth. Its
+notice manifest sets `providersEnabled` to false and omits their artifacts and
+source claims.
 
 ## Native transport
 

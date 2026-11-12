@@ -1,14 +1,19 @@
 package com.fixcraft.ito.ui
 
+import com.fixcraft.yume.providerlibrary.R
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ServerPlaceTest {
-    private val names = mapOf("JP" to "Japan", "ZZ" to "ZZ", "QM" to "")
+    private val names = mapOf("JP" to "Japan", "ZZ" to "ZZ", "QM" to "", "XA" to "Pseudo-Accents")
 
     private fun place(code: String?) = serverPlace(code) { names[it] ?: it }
 
-    @Test fun aKnownCountryHasItsFlagAndName() = assertEquals(ServerPlace("🇯🇵", "Japan"), place("JP"))
+    /** The library's flat art, never an emoji, which some phones draw waving. */
+    @Test fun aKnownCountryHasItsFlagAndName() = assertEquals(ServerPlace(R.drawable.flag_jp, "Japan"), place("JP"))
+
+    /** A named region without flag art keeps its name, and the screen shows the globe. */
+    @Test fun aNamedRegionWithoutArtKeepsItsName() = assertEquals(ServerPlace(null, "Pseudo-Accents"), place("XA"))
 
     @Test fun anAbsentCountryStaysUnknown() = assertEquals(ServerPlace(null, null), place(null))
 

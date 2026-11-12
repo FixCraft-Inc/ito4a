@@ -92,6 +92,12 @@ class NoticeGenerationTest(unittest.TestCase):
                       "source_sha256": source, "files": {"src/main/Provider.kt": entry}}
         if altered_entry:
             entry["sha256"] = "f" * 64
+        # The library carries flag-icons' art, so its notice travels with it.
+        flags = self.root / "flag-icons-MIT.txt"
+        flags.write_bytes(b"flag-icons license fixture\n")
+        self.catalog_value["sources"]["flag-icons-MIT.txt"] = {
+            "path": flags.name, "sha256": digest(flags.read_bytes()), "origin": "synthetic flag license fixture"}
+        self.catalog.write_text(json.dumps(self.catalog_value))
         artifact = self.root / "provider-library.aar"
         with zipfile.ZipFile(artifact, "w") as archive:
             archive.writestr("assets/provider-library/provenance.json", json.dumps(provenance))
@@ -107,6 +113,8 @@ class NoticeGenerationTest(unittest.TestCase):
         self.assertEqual(result["providerIdentity"]["version"], PINNED)
         provider = next(item for item in result["artifacts"] if item["coordinate"].startswith("com.fixcraft.yume:"))
         self.assertEqual(provider["sha256"], digest((self.root / "provider-library.aar").read_bytes()))
+        self.assertEqual(provider["notices"], ["LICENSE", "flag-icons-MIT.txt"])
+        self.assertTrue((self.output / "notices/flag-icons-MIT.txt").is_file())
 
     def test_a_library_version_other_than_the_pin_refuses(self) -> None:
         self.add_provider(version="0.0.1")
@@ -124,8 +132,9 @@ class NoticeGenerationTest(unittest.TestCase):
             self.run_generator()
 
     def test_minimal_inventory_omits_provider_source_claim(self) -> None:
-        self.catalog_value["sourceComponents"].append({
-            "name": "YUME shared Android provider library", "notices": ["LICENSE"]})
+        self.catalog_value["sourceComponents"] += [
+            {"name": "YUME shared Android provider library", "notices": ["LICENSE"]},
+            {"name": "flag-icons", "notices": ["flag-icons-MIT.txt"]}]
         self.catalog.write_text(json.dumps(self.catalog_value))
         resolved = json.loads(self.resolved.read_text())
         resolved["providersEnabled"] = False

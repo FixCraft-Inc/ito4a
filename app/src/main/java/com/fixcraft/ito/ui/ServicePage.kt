@@ -3,8 +3,11 @@ package com.fixcraft.ito.ui
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,9 +19,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -41,51 +44,52 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.fixcraft.ito.R
 import com.fixcraft.ito.transport.ConnectionController
 import com.fixcraft.ito.transport.ConnectionFailure
 import com.fixcraft.ito.transport.ConnectionPhase
 import com.fixcraft.ito.transport.ConnectionState
-import java.util.Locale
 
 /** What the status card names as the selected route, already in display form. */
 data class SelectedRoute(val name: String, val place: ServerPlace = ServerPlace(null, null))
 
 /**
  * A server's operator-declared country as the screen shows it. Both fields are null
- * when the operator gave none or the code names no region. The location is never
- * guessed from an address, and it says nothing about where traffic leaves.
+ * when the operator gave none or the code names no region, and [flag] is also null
+ * for a named region without flag art. The location is never guessed from an
+ * address, and it says nothing about where traffic leaves. Provider builds fill it
+ * (`serverPlace`), and manual configurations have none.
  */
-data class ServerPlace(val flag: String?, val name: String?)
+data class ServerPlace(@DrawableRes val flag: Int?, val name: String?)
 
-/** [displayName] turns a region code into words in the user's language. */
-fun serverPlace(country: String?, displayName: (String) -> String = { Locale("", it).getDisplayCountry(Locale.getDefault()) }): ServerPlace {
-    if (country == null || country.length != 2 || country.any { it !in 'A'..'Z' }) return ServerPlace(null, null)
-    val name = displayName(country).takeIf { it.isNotBlank() && it != country } ?: return ServerPlace(null, null)
-    return ServerPlace(country.map { String(Character.toChars(REGIONAL_INDICATOR_A + (it - 'A'))) }.joinToString(""), name)
-}
-
-/** Android draws two of these letters as the region's flag. */
-private const val REGIONAL_INDICATOR_A = 0x1F1E6
-
-/** The flag, or a plain globe when the place is unknown. Decoration only: the name beside it is what gets read aloud. */
+/**
+ * The flag, or a plain globe when the place has none. Decoration only: the name beside
+ * it is what gets read aloud. A flat flag with rounded corners and a hairline outline,
+ * so a white field still shows on a light surface.
+ */
 @Composable
 internal fun LocationMark(place: ServerPlace) {
     val flag = place.flag
-    if (flag != null) Text(flag, fontSize = 22.sp, modifier = Modifier.widthIn(min = 28.dp).clearAndSetSemantics {})
-    else Icon(painterResource(R.drawable.ic_globe), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (flag != null) {
+        val shape = RoundedCornerShape(3.dp)
+        Image(painterResource(flag), null, Modifier.size(24.dp, 18.dp).clip(shape)
+            .border(Dp.Hairline, MaterialTheme.colorScheme.outlineVariant, shape), contentScale = ContentScale.Crop)
+    } else {
+        Icon(painterResource(R.drawable.ic_globe), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable

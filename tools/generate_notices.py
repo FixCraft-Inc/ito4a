@@ -15,6 +15,10 @@ import sys
 import tempfile
 import zipfile
 
+# Source components that only the providers-enabled build packages: the shared
+# library and the flag art it carries.
+PROVIDER_COMPONENTS = frozenset({"YUME shared Android provider library", "flag-icons"})
+
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -126,7 +130,7 @@ def generate(root: Path, yume_root: Path, catalog_path: Path,
     if not providers_enabled and "providerIdentity" in resolved:
         raise ValueError("Minimal build contains provider identity")
     source_components = [component for component in catalog["sourceComponents"]
-                         if providers_enabled or component["name"] != "YUME shared Android provider library"]
+                         if providers_enabled or component["name"] not in PROVIDER_COMPONENTS]
     selected = set(catalog["common"])
     artifacts = []
     coordinates = set()
@@ -146,7 +150,7 @@ def generate(root: Path, yume_root: Path, catalog_path: Path,
                 raise ValueError("Multiple shared provider source artifacts")
             provider_identity = provider_source(path, coordinate, resolved.get("providerIdentity", {}),
                                                 provider_library_version(root))
-            known = {"sha256": sha256(regular_bytes(path)), "notices": ["LICENSE"]}
+            known = {"sha256": sha256(regular_bytes(path)), "notices": ["LICENSE", "flag-icons-MIT.txt"]}
         if known is None:
             raise ValueError(f"Dependency notice review required: {coordinate}")
         digest = sha256(regular_bytes(path))
