@@ -470,7 +470,7 @@ class ProviderLiveIntegrationTest {
         val run = state.generation
         assertEquals(ConnectionPhase.Connected, state.phase)
         assertEquals(previous.provider, services.state.value.selection?.provider)
-        val renewAt = requireNotNull(services.renewAfter(previous))
+        val renewAt = requireNotNull(services.state.value.entries.single { it.provider == previous.provider }.renewAfter)
         val deadline = SystemClock.elapsedRealtime() + (renewAt - System.currentTimeMillis() / 1000 + 90).coerceAtLeast(30) * 1000
         while ((selection(previous.provider).grant == previous.grant || state.generation == run || state.phase != ConnectionPhase.Connected) &&
             SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(250)

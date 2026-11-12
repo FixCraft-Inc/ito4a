@@ -14,6 +14,7 @@ import com.fixcraft.ito.transport.ChosenRoute
 import com.fixcraft.ito.transport.SelectedService
 import com.fixcraft.ito.transport.ServicePermit
 import com.fixcraft.ito.transport.ServiceRefusal
+import com.fixcraft.ito.transport.ServiceRenewal
 import com.fixcraft.yume.consumer.ServiceController
 import com.fixcraft.yume.consumer.ServiceRoute
 import com.fixcraft.yume.consumer.ServiceSelection
@@ -63,8 +64,12 @@ fun transportServices(owner: ServiceController<ItoProviderSession>): ConnectionS
     override suspend fun prepare(route: ChosenRoute, renew: Boolean): SelectedService = authority {
         ProviderSelection(owner.prepare((route as? ProviderRoute)?.route ?: throw ServiceRefusal("binding"), renew))
     }
-    override fun renewAfter(selection: SelectedService): Long? = authority {
-        owner.renewAfter((selection as? ProviderSelection)?.selected ?: throw ServiceRefusal("binding"))
+    override fun renewal(selection: SelectedService): ServiceRenewal? = authority {
+        owner.renewal((selection as? ProviderSelection)?.selected ?: throw ServiceRefusal("binding"))?.let { renewal ->
+            object : ServiceRenewal {
+                override fun due() = renewal.due()
+            }
+        }
     }
     override suspend fun open(selection: SelectedService): OpenedService = authority {
         val selected = (selection as? ProviderSelection)?.selected ?: throw ServiceRefusal("binding")

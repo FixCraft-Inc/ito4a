@@ -15,8 +15,8 @@ interface ConnectionServices {
      */
     suspend fun prepare(route: ChosenRoute, renew: Boolean): SelectedService
     suspend fun open(selection: SelectedService): OpenedService
-    /** UTC seconds after which [selection]'s lease renews without a person, or null if it never does. */
-    fun renewAfter(selection: SelectedService): Long?
+    /** When [selection]'s lease renews without a person, or null if it never does. */
+    fun renewal(selection: SelectedService): ServiceRenewal?
 }
 
 interface ChosenRoute {
@@ -31,6 +31,11 @@ interface SelectedService {
 interface ServicePermit {
     /** Captured authority remains independent of screen locking and later UI selection. */
     fun valid(): Boolean
+}
+
+interface ServiceRenewal {
+    /** Judged on the provider's trusted time, never the device's wall clock, and cheap enough to poll. */
+    fun due(): Boolean
 }
 
 interface OpenedService : AutoCloseable {

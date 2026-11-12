@@ -6,6 +6,7 @@ import com.fixcraft.ito.transport.OpenedService
 import com.fixcraft.ito.transport.ChosenRoute
 import com.fixcraft.ito.transport.SelectedService
 import com.fixcraft.ito.transport.ServiceRefusal
+import com.fixcraft.ito.transport.ServiceRenewal
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -23,7 +24,7 @@ class MinimalServices(private val retainedState: () -> Boolean, private val requ
     }
     override suspend fun open(selection: SelectedService): OpenedService = throw ServiceRefusal("providers_disabled")
     override suspend fun prepare(route: ChosenRoute, renew: Boolean): SelectedService = throw ServiceRefusal("providers_disabled")
-    override fun renewAfter(selection: SelectedService): Long? = null
+    override fun renewal(selection: SelectedService): ServiceRenewal? = null
 }
 
 fun createServices(context: Context, requireAccess: () -> Unit = {},

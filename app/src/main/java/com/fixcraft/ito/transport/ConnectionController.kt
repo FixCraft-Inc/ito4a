@@ -429,7 +429,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                     if (permit?.valid() == false) throw ServiceRefusal("revoked")
                 }
                 checkAuthority()
-                var renewAt = provider?.let { requireNotNull(services).renewAfter(it) }
+                var renewal = provider?.let { requireNotNull(services).renewal(it) }
                 val description = ManualConfiguration.describe(config)
                 requireCapturedNetwork(run)
                 val address = resolve(run.network, description.dialAddress ?: description.host)
@@ -471,10 +471,10 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                     checkAuthority()
                     // A call holds this loop in serveLane, so renewal waits for it to end. The next
                     // lease is prepared while this one serves, and the run moves only once it exists.
-                    if (renewAt != null && System.currentTimeMillis() / 1000 >= renewAt) {
+                    if (renewal?.due() == true) {
                         val next = requireNotNull(services).prepare(requireNotNull(serviceRoute), renew = true)
                         if (next.identity != requireNotNull(provider).identity) throw RenewalDue(next)
-                        renewAt = requireNotNull(services).renewAfter(next)
+                        renewal = requireNotNull(services).renewal(next)
                     }
                     currentCoroutineContext().ensureActive()
                     val status = ItoNative.status(run.handle)

@@ -11,7 +11,10 @@ import unittest
 import zipfile
 
 sys.dont_write_bytecode = True
-from generate_notices import generate
+from generate_notices import generate, provider_library_version
+
+# The pin this checkout states once, in its gradle.properties.
+PINNED = provider_library_version(Path(__file__).resolve().parents[1])
 
 
 def digest(data: bytes) -> str:
@@ -23,6 +26,7 @@ class NoticeGenerationTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="ito-generate-notices-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        (self.root / "gradle.properties").write_text(f"itoProviderLibraryVersion={PINNED}\n")
         self.yume = self.root / "yume"
         self.yume.mkdir()
         self.guard = self.yume / "dependencies.json"
@@ -81,10 +85,10 @@ class NoticeGenerationTest(unittest.TestCase):
         return generate(self.root, self.yume, self.catalog, self.resolved, self.provenance, self.output,
                         self.call_provenance)
 
-    def add_provider(self, *, altered_entry: bool = False, wrong_binding: bool = False) -> None:
+    def add_provider(self, *, altered_entry: bool = False, wrong_binding: bool = False, version: str = PINNED) -> None:
         entry = {"mode": 0o644, "sha256": digest(b"provider source"), "size": 15}
         source = digest(f"src/main/Provider.kt\0{entry['mode']}\0{entry['sha256']}\n".encode())
-        provenance = {"schema": 1, "component": "com.fixcraft.yume:provider-library", "version": "0.5.0",
+        provenance = {"schema": 1, "component": "com.fixcraft.yume:provider-library", "version": version,
                       "source_sha256": source, "files": {"src/main/Provider.kt": entry}}
         if altered_entry:
             entry["sha256"] = "f" * 64
@@ -92,17 +96,22 @@ class NoticeGenerationTest(unittest.TestCase):
         with zipfile.ZipFile(artifact, "w") as archive:
             archive.writestr("assets/provider-library/provenance.json", json.dumps(provenance))
         resolved = json.loads(self.resolved.read_text())
-        resolved["artifacts"].append({"coordinate": "com.fixcraft.yume:provider-library:0.5.0", "path": str(artifact)})
-        resolved["providerIdentity"] = {"version": "0.5.0", "source_sha256": "e" * 64 if wrong_binding else source}
+        resolved["artifacts"].append({"coordinate": f"com.fixcraft.yume:provider-library:{version}", "path": str(artifact)})
+        resolved["providerIdentity"] = {"version": version, "source_sha256": "e" * 64 if wrong_binding else source}
         self.resolved.write_text(json.dumps(resolved))
 
     def test_provider_source_aar_keeps_exact_runtime_hash_and_source_binding(self) -> None:
         self.add_provider()
         self.run_generator()
         result = json.loads((self.output / "notices/manifest.json").read_text())
-        self.assertEqual(result["providerIdentity"]["version"], "0.5.0")
+        self.assertEqual(result["providerIdentity"]["version"], PINNED)
         provider = next(item for item in result["artifacts"] if item["coordinate"].startswith("com.fixcraft.yume:"))
         self.assertEqual(provider["sha256"], digest((self.root / "provider-library.aar").read_bytes()))
+
+    def test_a_library_version_other_than_the_pin_refuses(self) -> None:
+        self.add_provider(version="0.0.1")
+        with self.assertRaisesRegex(ValueError, "binding is incomplete"):
+            self.run_generator()
 
     def test_provider_source_substitution_refuses(self) -> None:
         self.add_provider(wrong_binding=True)

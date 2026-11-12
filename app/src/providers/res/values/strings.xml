@@ -36,7 +36,8 @@
     <string name="provider_error_unauthorized">Sign in again to continue.</string>
     <string name="provider_error_not_entitled">Your account does not include this server.</string>
     <string name="provider_error_unavailable">The provider is unavailable. Try again later.</string>
-    <string name="provider_error_stale">The server list is out of date or this phone\'s time could not be confirmed. Check the date and time, then try again.</string>
+    <string name="provider_error_stale">The server list or sign-in is out of date. Try again.</string>
+    <string name="provider_error_clock_unavailable">The current time could not be confirmed yet. Check the internet connection, then try again.</string>
     <string name="provider_error_unsupported">This provider uses a sign-in that this version of Ito does not support.</string>
     <string name="provider_error_cancelled">Cancelled.</string>
     <string name="provider_error_storage">Ito could not read or save provider data on this phone.</string>

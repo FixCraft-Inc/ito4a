@@ -280,7 +280,7 @@ androidComponents.onVariants { variant ->
         checkoutDirectory.set(rootProject.layout.projectDirectory)
         nativeSourceDirectory.set(yumeRoot)
         sourceFiles.from(rootProject.fileTree("notices/texts"), rootProject.file("LICENSE"),
-            rootProject.file("THIRD_PARTY_LICENSES.md"),
+            rootProject.file("THIRD_PARTY_LICENSES.md"), rootProject.file("gradle.properties"),
             fileTree(System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: "/nonexistent-sdk") {
                 include("ndk/28.2.13676358/source.properties")
                 include("ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/**/libc++_shared.so")

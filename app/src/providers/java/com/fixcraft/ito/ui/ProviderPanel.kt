@@ -372,6 +372,7 @@ private fun providerMessage(code: String): Int = when (code) {
     "not_entitled" -> R.string.provider_error_not_entitled
     "unavailable" -> R.string.provider_error_unavailable
     "stale" -> R.string.provider_error_stale
+    "clock_unavailable" -> R.string.provider_error_clock_unavailable
     "unsupported" -> R.string.provider_error_unsupported
     "cancelled" -> R.string.provider_error_cancelled
     "storage", "state" -> R.string.provider_error_storage

@@ -4,8 +4,9 @@ With `-PitoProviders=true`, Ito uses the independent `provider-library` source p
 single protocol contract is yume4a’s `docs/PROVIDERS.md`; the reusable library’s
 `README.md` owns its interfaces and version. Ito supplies encrypted storage,
 public-libyume validation, connection lifetime and UI adapters. Neither
-application links the other application. Library version 0.5.0, provider wire
-version 1 and the experimental libyume ABI have independent version axes.
+application links the other application. The library version Ito accepts is
+`itoProviderLibraryVersion` in `gradle.properties`, its one owner. It, provider
+wire version 1 and the experimental libyume ABI are independent version axes.
 
 ## Enrollment and authority
 
@@ -82,9 +83,11 @@ provider, manual or direct-route fallback.
 
 API/account expiry and transport expiry are independent. API refresh rotates
 account credentials without silently granting transport authority. Rotation,
-known revocation, provider removal, loss of trusted time or transport expiry
-invalidates the captured run permit. Ito stops the native run, joins every JNI
-borrower, destroys its handle, then closes the credential session and permit.
+known revocation, provider removal, clock rollback or transport expiry
+invalidates the captured run permit. Without trusted time only its monotonic
+deadline applies, as yume4a's `docs/PROVIDER_CLIENT.md` "Trusted time" states.
+Ito stops the native run, joins every JNI borrower, destroys its handle, then
+closes the credential session and permit.
 A new connection requires an explicit action and a valid exact lease.
 
 A lease lasts as long as the provider grants, which can be as short as an
@@ -133,7 +136,8 @@ delete or rewrite provider credentials.
 
 Use `-PitoProviders=true` and
 `-PitoProviderRoot=/absolute/path/to/yume4a/provider-library` with the exact
-reviewed source content. The build requires library version 0.5.0. For an
+reviewed source content. The build requires the library version that
+`gradle.properties` pins. For an
 explicit registration, provide both `-PitoProviderClientId=...` and
 `-PitoProviderCallback=https://HOST/ito/oauth/callback`. The callback host must
 publish the actual APK package/signer association. Partial or malformed

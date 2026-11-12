@@ -26,9 +26,18 @@ def regular_bytes(path: Path) -> bytes:
     return path.read_bytes()
 
 
-def provider_source(artifact: Path, coordinate: str, binding: dict) -> dict:
+def provider_library_version(root: Path) -> str:
+    """The pinned provider-library version, whose one owner is gradle.properties."""
+    for line in regular_bytes(root / "gradle.properties").decode("utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "itoProviderLibraryVersion" and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value.strip()):
+            return value.strip()
+    raise ValueError("gradle.properties names no provider library version")
+
+
+def provider_source(artifact: Path, coordinate: str, binding: dict, pinned: str) -> dict:
     if (set(binding) != {"version", "source_sha256"} or
-            binding["version"] != "0.5.0" or
+            binding["version"] != pinned or
             not re.fullmatch(r"[0-9a-f]{64}", binding["source_sha256"]) or
             coordinate != f"com.fixcraft.yume:provider-library:{binding['version']}"):
         raise ValueError("Shared provider source binding is incomplete")
@@ -135,7 +144,8 @@ def generate(root: Path, yume_root: Path, catalog_path: Path,
         if coordinate.startswith("com.fixcraft.yume:provider-library:"):
             if provider_identity is not None:
                 raise ValueError("Multiple shared provider source artifacts")
-            provider_identity = provider_source(path, coordinate, resolved.get("providerIdentity", {}))
+            provider_identity = provider_source(path, coordinate, resolved.get("providerIdentity", {}),
+                                                provider_library_version(root))
             known = {"sha256": sha256(regular_bytes(path)), "notices": ["LICENSE"]}
         if known is None:
             raise ValueError(f"Dependency notice review required: {coordinate}")

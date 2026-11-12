@@ -181,6 +181,13 @@ class ProviderPanelTest {
         compose.onNodeWithText(text(R.string.provider_link_settings)).assertExists()
     }
 
+    /** Missing trusted time has its own message, not the out-of-date one. */
+    @Test fun missingTrustedTimeHasItsOwnMessage() {
+        render(base.copy(error = "clock_unavailable"))
+        compose.onNodeWithText(text(R.string.provider_error_clock_unavailable)).assertExists()
+        compose.onAllNodesWithText(text(R.string.provider_error_stale)).assertCountEquals(0)
+    }
+
     private companion object {
         const val PROVIDER = "https://operator.example"
         const val ISSUER = "https://issuer.example"
