@@ -120,7 +120,6 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     }
     private class RunCleanupFailure(val failure: ConnectionFailure, val nativeCode: Int = 0)
     private class RunNetworkLost : Exception()
-    /** The lease reached its renewal time while no call was in progress. */
     /** A renewed lease is ready, so the run reconnects with it. */
     private class RenewalDue(val next: SelectedService) : Exception()
     private class NetworkMonitorUnavailable : Exception()
@@ -159,7 +158,6 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         withContext(Dispatchers.IO) { store.select(id); services?.selectManual() }
         reload()
     }
-    /** Serializes an explicit application authority change with native teardown. */
     /**
      * Runs [action], which changes service authority. A run on another provider
      * stops first. With [move], a run on [provider] reconnects afterwards, so a
