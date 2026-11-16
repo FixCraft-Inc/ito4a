@@ -26,7 +26,10 @@ the identity, adds and verifies contacts, shows a call invitation as a QR code
 and scans one with the camera. The Android [audio adapter](docs/VOICE.md)
 adds user-started mono Opus capture/playback and a foreground call service.
 Physical audio/routing and voice readiness require separate device evidence.
-Ringing and push are not implemented.
+Incoming ringing and push are not implemented in this app. The portable core
+implements pairing, ratcheted messages and ringing. The
+[messenger design](https://github.com/FixCraft-Inc/ito/blob/main/docs/MESSENGER.md)
+describes the app integration that remains.
 
 [Local content](docs/LOCAL_CONTENT.md) keeps bounded messages/history encrypted
 on this installation. [App lock](docs/APP_LOCK.md) adds optional platform

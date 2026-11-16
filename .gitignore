@@ -10,3 +10,11 @@ local.properties
 *.keystore
 .release-signing.env
 .DS_Store
+
+# Local assistant state and diagnostic output.
+.claude/
+.codex/
+*.log
+*.hprof
+*.pcap
+*.pcapng
