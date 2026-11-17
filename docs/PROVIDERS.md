@@ -60,10 +60,11 @@ note that it is not proof of where traffic leaves. Each provider row's menu hold
 Refresh servers, Service details and Remove service, and these labels and steps
 match yume4a's.
 Choosing a server provisions and selects that exact service/server authority. Credentials are validated through Ito’s qualified
-JNI adapter to the public C ABI before publication. Ito requires exactly the
-`ito-call` native `stream` service and no local adapters for a provider relay
-grant. The operator must route that named service to the separately deployed
-call relay module. A general-purpose `tcp`/`udp` VPN kit cannot become an Ito
+JNI adapter to the public C ABI before publication. Ito requires the `ito-call`
+native `stream` service, optionally accompanied by the `ito-mailbox` stream,
+and no local adapters for a provider relay grant. Duplicate or other services
+are refused. The operator must route each named service to its separately
+deployed module. A general-purpose `tcp`/`udp` VPN kit cannot become an Ito
 provider grant. The shared validator delegates this application policy to
 `ItoProviderNative`, while retaining schema, credential containment and exact
 server/identity binding. Manual imports keep their separate contract.

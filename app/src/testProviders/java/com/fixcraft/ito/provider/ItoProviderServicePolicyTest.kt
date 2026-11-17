@@ -12,8 +12,15 @@ class ItoProviderServicePolicyTest {
     private fun document() = JSONObject().put("services", JSONArray()
         .put(service("ito-call", "stream"))).put("adapters", JSONArray())
 
-    @Test fun onlyTheNamedCallStreamIsAccepted() {
+    @Test fun theCallStreamWithoutAMailboxIsAccepted() {
         ItoProviderNative.checkProviderServicePolicy(document())
+    }
+
+    @Test fun theCallAndMailboxStreamsAreAcceptedInEitherOrder() {
+        for (names in listOf(listOf("ito-call", "ito-mailbox"), listOf("ito-mailbox", "ito-call"))) {
+            ItoProviderNative.checkProviderServicePolicy(document().put("services",
+                JSONArray().apply { names.forEach { put(service(it, "stream")) } }))
+        }
     }
 
     @Test fun aVpnKitCannotBecomeAnItoRelayGrant() {
@@ -29,6 +36,12 @@ class ItoProviderServicePolicyTest {
             JSONArray().put(service("ito-call", "stream")).put(service("extra", "stream")),
             JSONArray().put(service("ito-call", "packet")),
             JSONArray().put(service("other-relay", "stream")),
+            JSONArray().put(service("ito-mailbox", "stream")),
+            JSONArray().put(service("ito-call", "stream")).put(service("ito-call", "stream")),
+            JSONArray().put(service("ito-mailbox", "stream")).put(service("ito-mailbox", "stream")),
+            JSONArray().put(service("ito-call", "stream")).put(service("ito-mailbox", "packet")),
+            JSONArray().put(service("ito-call", "stream")).put(service("ito-mailbox", "stream"))
+                .put(service("extra", "stream")),
         )
         candidates.forEach { services ->
             assertEquals("unsupported", assertThrows(ProviderCodec.Refusal::class.java) {
@@ -38,9 +51,11 @@ class ItoProviderServicePolicyTest {
     }
 
     @Test fun providerLocalAdaptersAreRefusedBeforeAdaptationCanDiscardThem() {
-        for (kind in listOf("socks5", "forward", "module")) {
+        for (withMailbox in listOf(false, true)) for (kind in listOf("socks5", "forward", "module")) {
+            val config = document()
+            if (withMailbox) config.getJSONArray("services").put(service("ito-mailbox", "stream"))
             assertEquals("unsupported", assertThrows(ProviderCodec.Refusal::class.java) {
-                ItoProviderNative.checkProviderServicePolicy(document().put("adapters",
+                ItoProviderNative.checkProviderServicePolicy(config.put("adapters",
                     JSONArray().put(JSONObject().put("kind", kind).put("service", "ito-call"))))
             }.code)
         }

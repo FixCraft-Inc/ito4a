@@ -57,15 +57,20 @@ class ItoProviderNative(private val sessions: ItoProviderSessions) : ProviderKit
     }
 
     companion object {
-        /** The call controller opens only this named stream; no local network adapter is needed. */
+        /** Calling is required; messaging may share the connection without local adapters. */
         internal fun checkProviderServicePolicy(document: JSONObject) {
             val services = document.getJSONArray("services")
-            if (services.length() != 1) throw ProviderCodec.Refusal("unsupported")
-            val service = services.getJSONObject(0)
-            if (service.getString("name") != "ito-call" || service.getString("kind") != "stream" ||
-                document.getJSONArray("adapters").length() != 0) {
+            if (services.length() !in 1..2 || document.getJSONArray("adapters").length() != 0) {
                 throw ProviderCodec.Refusal("unsupported")
             }
+            val names = mutableSetOf<String>()
+            for (index in 0 until services.length()) {
+                val service = services.getJSONObject(index)
+                val name = service.getString("name")
+                if (name !in setOf("ito-call", "ito-mailbox") || !names.add(name) ||
+                    service.getString("kind") != "stream") throw ProviderCodec.Refusal("unsupported")
+            }
+            if ("ito-call" !in names) throw ProviderCodec.Refusal("unsupported")
         }
 
         internal fun referenced(files: List<ProviderFile>, config: ByteArray): Map<String, ByteArray> {
