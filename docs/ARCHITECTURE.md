@@ -28,7 +28,7 @@ establish encryption or transport implementation.
 ## Authenticated data connections
 
 The process-owned `ConnectionController` owns one `ConfigurationStore` and one
-native run. Android screens observe public labels and state. Sealed documents
+native run, including its call/probe lane and dedicated mailbox worker. Android screens observe public labels and state. Sealed documents
 and codes stay process-local. Native validation precedes storage publication.
 Import does not select a configuration. Start reacquires the selected encrypted
 material and creates private credentials for that run. Native handles close
@@ -50,11 +50,14 @@ Adapter/control settings become empty because Ito opens public streams/packets
 directly. Circuits and upstream proxies are refused by the current app adapter.
 Services, suite, limits and credential authority remain the imported values.
 No device is attached, so the native endpoint makes one attempt. A failure or
-network loss stops that run. Reconnect requires another explicit Connect action.
+network loss stops that run. While foreground or owned by the opt-in messaging service, the app retries transient failures
+through the selected service with the same network rule and a delay capped at
+30 seconds. Authentication, authority and storage errors require intervention.
 It never substitutes another configuration or a direct destination socket.
-Activity backgrounding stops ordinary data connections. An already active
-foreground audio call retains its connection; rotation retains the process
-owner. Process restart restores explicit selection but does not auto-connect.
+Activity backgrounding stops ordinary data connections unless the opt-in
+messaging service owns reachability. An already active foreground audio call
+retains its connection; rotation retains the process owner. Process restart restores selection and connects when foreground access is available.
+Disconnect pauses automatic attempts for this process until Connect.
 
 Document reads admit one importer at a time, check regular-file type and bounded
 size, and request provider cancellation at ten seconds or Stop. Native Stop is
@@ -72,32 +75,47 @@ These data probes are not calls or end-to-end media encryption.
 [Native integration](NATIVE.md) and [storage](SECRET_STORAGE.md) own the detailed
 build, JNI, cancellation, secret and recovery contracts.
 
-## Call screens
+## Chats, pairing and calls
 
-The Calls tab reads the process-owned `CallBook` and `CallController` through
-`CallsModel`. Book changes run on the I/O dispatcher, and a refusal becomes a
-resource string. The screens create the identity, show the public contact
-code as text and a QR code with the complete fingerprint, add a contact from a
-typed or scanned code, verify it, replace a changed key and block a contact.
-Verification is the person's comparison of every fingerprint group, or an
-in-person scan whose key must equal the stored key. Either way the complete
-fingerprint goes to the core, which refuses a prefix. Only a verified contact
-offers Call, and only while the relay service is connected. Otherwise the
-contact's screen says to connect first. Copy and share exist only for the
-public contact code. A call the controller refuses before it starts reads
-"Call not started". Local history records only calls whose contact proved its
-identity, so only those can report that history was not saved. Byte counts
-and digests appear in Advanced mode.
+Chats is the main destination. `CallsModel` sends book and messenger operations
+to I/O and exposes typed refusals through resource strings. `Messenger` owns
+identity-2 upgrade, pairing and one native message session per paired contact.
+`ChatRepository` owns per-contact history/session encryption, pending sends,
+receipts, settings and migration from the old content snapshot. The portable
+core owns every message key, trust transition, encoding and replay decision.
+[Local content](LOCAL_CONTENT.md) states publication and retention guarantees.
 
-An initiator's invitation appears only as a QR code on a window with
-`FLAG_SECURE`. The invitation scanner's window is secure too. Scanning uses the framework
-Camera2 API and ZXing core, with no camera library. The camera permission is
-requested when a scan starts, the camera runs only while the scanner is on
-screen, and leaving the app ends the scan. A scanned text must be the
-canonical invitation or contact-code form before anything acts on it. The
-responder sees its consent prompt only after the core authenticated the
-contact. The end screen says "Declined by the contact" only for an attributed
-END. A peer END before its proof is reported as unattributed.
+An in-person pairing code appears on a secure window. Both people compare the
+six-digit code before the owner confirms. A shared link remains unverified
+until full safety-code comparison. The one scanner dispatches pairing and safety codes and explains legacy
+call invitations and contact text. Unknown text and legacy contact
+codes get an explanation. Safety QR text binds both complete composite
+fingerprints and all 60 safety digits using the closed grammar
+`ito-safety:1:<64 lowercase hex>:<64 lowercase hex>:<60 digits>`.
+A matching scan still requires user confirmation. A dashed portrait ring means
+unverified, a solid ring verified. Unverified contacts offer comparison in
+place of the message composer. Identity-1 contacts offer Pair again.
+
+Mailbox traffic uses only the currently authenticated shared relay. The app
+opens new inboxes before exposing their addresses and deposits the scanner's
+confirmation before opening the ratchet. It shows queued, sent, delivered and
+read states, local deletion, a shared retention timer and verification method.
+Names are local labels or peer-provided hints, never provider attestations.
+Messages and call summaries share a timeline ordered by local arrival.
+
+Paired, verified contacts use ratcheted ringing and composite call profile 3.
+The incoming screen appears only after the core authenticates the invitation.
+Its isolated activity can appear over Android's keyguard without exposing app
+navigation. Main and incoming activities share visible connection ownership,
+so moving between them keeps the same run and app-lock state.
+Accept creates the responder before JOIN, with no second consent prompt.
+The [Android lifecycle](MESSAGING_LIFECYCLE.md) owns background reachability,
+notification privacy and the app-lock boundary. The end screen
+attributes a peer END only after proof. The Android Camera2/ZXing scanner runs
+only while its screen is active, requests permission on entry and stops when
+the app leaves foreground. Invitation/pairing text stays transient and out of
+saved navigation. Only shared pairing links offer Share. Camera, audio and
+background reachability require their own device evidence.
 
 ## Planned composition
 
@@ -128,7 +146,7 @@ carry authenticated DATA. The portable [content codec](https://github.com/FixCra
 adds bounded Opus/chat envelopes above that DATA channel. Android's
 [foreground audio adapter](VOICE.md) owns microphone/playback, codecs, focus
 and routes. [App lock](APP_LOCK.md) guards new secret access, and
-[local content](LOCAL_CONTENT.md) owns encrypted bounded messages/history.
+[local content](LOCAL_CONTENT.md) owns encrypted per-chat messages/history and native sessions.
 The call core owns buffered DATA/END processing across orderly input EOF and
 keeps application backpressure within the bounds in
 [calling security](https://github.com/FixCraft-Inc/ito/blob/main/docs/CALL_SECURITY.md). This lifecycle policy stays above YUME.

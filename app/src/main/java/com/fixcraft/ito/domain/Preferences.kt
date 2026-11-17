@@ -50,6 +50,8 @@ data class Preferences(
     val audio: AudioPreference = AudioPreference.Adaptive,
     val services: List<SavedService> = emptyList(),
     val presentation: Presentation = Presentation.Simple,
+    val backgroundMessages: Boolean = false,
+    val notificationText: Boolean = true,
 ) {
     init {
         require(services.size <= MAX_SERVICES)

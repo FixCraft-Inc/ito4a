@@ -110,6 +110,8 @@ object CallNative {
     external fun invitationOpen(store: Long, invitation: ByteArray, fingerprint: ByteArray, service: String, nowUnix: Long): Long
     external fun invitationInitiator(invitation: Long): ByteArray
     external fun invitationProfile(invitation: Long): Int
+    external fun invitationId(invitation: Long): ByteArray
+    external fun invitationIssued(invitation: Long): Long
     external fun invitationDestroy(invitation: Long)
 
     external fun callCreateInitiator(store: Long, peer: ByteArray, fingerprint: ByteArray, service: String,

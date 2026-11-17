@@ -69,7 +69,7 @@ class AppLockController internal constructor(
     constructor(context: Context) : this(
         File(context.applicationContext.noBackupFilesDir, "ito-access"),
         AndroidLockKeys(context.applicationContext),
-        { File(context.applicationContext.noBackupFilesDir, "ito-content/snapshot.bin").exists() },
+        { hasRetainedContent(context.applicationContext.noBackupFilesDir) },
         ::syncAndroidDirectory,
     )
 
@@ -390,4 +390,21 @@ internal class AndroidLockKeys(private val context: Context, private val aliasPr
             generateKey()
         }
     }
+}
+
+/** Empty prepared directories hold no key-dependent data. Unreadable paths fail closed. */
+internal fun hasRetainedContent(root: File): Boolean {
+    val noFollow = java.nio.file.LinkOption.NOFOLLOW_LINKS
+    fun attributes(name: String) = java.nio.file.Files.readAttributes(File(root, name).toPath(),
+        java.nio.file.attribute.BasicFileAttributes::class.java, noFollow)
+    return try {
+        try { attributes("ito-content/snapshot.bin"); return true }
+        catch (_: java.nio.file.NoSuchFileException) { /* No legacy record. */ }
+        val chats = File(root, "ito-chats").toPath()
+        val directory = try { attributes("ito-chats") }
+        catch (_: java.nio.file.NoSuchFileException) { return false }
+        if (!directory.isDirectory) true
+        else java.nio.file.Files.newDirectoryStream(chats).use { it.iterator().hasNext() }
+    } catch (_: java.io.IOException) { true }
+    catch (_: SecurityException) { true }
 }

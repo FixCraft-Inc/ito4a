@@ -9,7 +9,9 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
@@ -25,6 +27,16 @@
         android:usesCleartextTraffic="false">
         <service android:name=".call.CallAudioService" android:exported="false"
             android:foregroundServiceType="microphone" />
+        <receiver android:name=".messaging.RingActionReceiver" android:exported="false" />
+        <service android:name=".messaging.MessagingService" android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled persistent encrypted mailbox and incoming-call signaling without push" />
+        </service>
+        <activity android:name=".IncomingCallActivity" android:exported="false"
+            android:showWhenLocked="true" android:turnScreenOn="true"
+            android:excludeFromRecents="true" android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.incoming" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

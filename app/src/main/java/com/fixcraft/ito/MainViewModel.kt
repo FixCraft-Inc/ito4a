@@ -51,6 +51,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // defaults. Settings expose them again when direct calls and lower-data
     // audio exist, so nothing here can change them today.
 
+    fun setBackgroundMessages(enabled: Boolean) {
+        if (enabled && !(getApplication<Application>() as ItoApplication).notifications.allowed()) {
+            mutableNotice.value = R.string.messaging_permission_required
+            return
+        }
+        update { it.copy(backgroundMessages = enabled) }
+    }
+
+    fun setNotificationText(enabled: Boolean) = update { it.copy(notificationText = enabled) }
+
     fun setPresentation(value: Presentation) = update { it.copy(presentation = value) }
 
     fun addService(service: SavedService) = update { current ->

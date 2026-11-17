@@ -65,7 +65,7 @@ import com.fixcraft.ito.domain.SavedService
 import java.util.UUID
 
 enum class Page(@StringRes val label: Int, val icon: Int) {
-    Calls(R.string.calls, R.drawable.ic_call),
+    Calls(R.string.chats, R.drawable.ic_call),
     Service(R.string.connections, R.drawable.ic_link),
     Settings(R.string.settings, R.drawable.ic_settings),
 }
@@ -90,7 +90,11 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
     // Where the Settings tab is: null for its first screen, empty for the notice list, or one notice file.
     var notice by rememberSaveable { mutableStateOf<String?>(null) }
     val openNotice = notice.takeIf { page == Page.Settings }
-    val bar = if (page == Page.Calls) callsBar(calls, callsRoute) else CallsBar(null, null)
+    val activeCall by calls.view.collectAsStateWithLifecycle()
+    LaunchedEffect(activeCall.phase) {
+        if (activeCall.phase != com.fixcraft.ito.call.CallPhase.Idle && activeCall.phase != com.fixcraft.ito.call.CallPhase.Ended) onPage(Page.Calls)
+    }
+    val bar = if (page == Page.Calls) chatBar(calls, callsRoute) else CallsBar(null, null)
     val select = { destination: Page ->
         // Choosing the current tab again returns it to its first screen.
         if (destination == Page.Calls && page == Page.Calls) callsRoute = CALLS_HOME
@@ -122,14 +126,16 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
             is PreferencesState.Ready -> {
                 val advanced = state.preferences.presentation == Presentation.Advanced
                 when (page) {
-                    Page.Calls -> CallsPage(calls, callsRoute, { callsRoute = it }, advanced) { onPage(Page.Service) }
+                    Page.Calls -> ChatsPage(calls, callsRoute, { callsRoute = it }, advanced) { onPage(Page.Service) }
                     Page.Service -> PageColumn {
                         ServiceConnectionPanel(connectionState, model.connections, model.services, advanced)
                         // Saved addresses predate enrollment and do nothing on their own.
                         if (advanced) Section { SavedAddresses(state.preferences, model::addService, model::removeService) }
                     }
                     Page.Settings -> when {
-                        openNotice == null -> SettingsPage(state.preferences, model::setPresentation, lockEnabled, onLock) { notice = "" }
+                        openNotice == null -> SettingsPage(state.preferences, model::setPresentation, lockEnabled, onLock,
+                            onLicenses = { notice = "" }, onBackground = model::setBackgroundMessages,
+                            onNotificationText = model::setNotificationText)
                         openNotice.isEmpty() -> LicensesPage { notice = it }
                         else -> NoticePage(openNotice)
                     }

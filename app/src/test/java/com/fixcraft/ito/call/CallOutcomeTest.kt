@@ -4,6 +4,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CallOutcomeTest {
+    @Test fun authenticatedRingEndHasItsOwnAttribution() {
+        val ended = CallView(phase = CallPhase.Ended, result = CallNative.CANCELED)
+        assertEquals(CallOutcome.DeclinedByContact, CallOutcomes.of(ended.copy(ringEnd = 2)))
+        assertEquals(CallOutcome.Busy, CallOutcomes.of(ended.copy(ringEnd = 3)))
+        assertEquals(CallOutcome.TimedOut, CallOutcomes.of(ended.copy(ringEnd = 4)))
+        assertEquals(CallOutcome.YouEnded, CallOutcomes.of(ended))
+    }
+
     private fun ended(result: Int, remoteEnd: Int = 0, attributed: Boolean = false) =
         CallOutcomes.of(CallView(phase = CallPhase.Ended, result = result, remoteEnd = remoteEnd, endAttributed = attributed))
 

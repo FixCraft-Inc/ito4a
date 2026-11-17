@@ -92,6 +92,12 @@ def call_core_libraries(catalog: dict, native: dict, call_path: Path,
         raise ValueError("Call core OpenSSL changed: notice review required")
     if call["ndk"] != catalog["ndk"] or sorted(call["libraries"]) != sorted(native["abis"]):
         raise ValueError("Call core provenance does not match the native build")
+    headers = call.get("headers_sha256")
+    if not isinstance(headers, dict) or set(headers) != {"call.h", "content.h", "message.h"}:
+        raise ValueError("Call core provenance must bind every public header")
+    for name, expected in headers.items():
+        if sha256(regular_bytes(call_path.parent / "include" / "ito" / name)) != expected:
+            raise ValueError("Call core header differs from provenance")
     libraries = {}
     for abi in native["abis"]:
         expected = call["libraries"][abi]
@@ -101,6 +107,7 @@ def call_core_libraries(catalog: dict, native: dict, call_path: Path,
         libraries[f"lib/{abi}/libitocall.so"] = packaged_digest(library, strip_tool)
     identity = {"head": call["head"], "unverified_test_source": call["unverified_test_source"],
                 "core_sources_sha256": call["core_sources_sha256"],
+                "headers_sha256": headers,
                 "openssl_archive_sha256": call["openssl_archive_sha256"]}
     return libraries, identity
 

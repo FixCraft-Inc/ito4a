@@ -2,7 +2,8 @@
 
 // The one seam between Ito's transport adapter (ito_jni.cpp), which owns a
 // connection's libyume endpoint and its streams, and the call adapter
-// (ito_call_jni.cpp), which runs the call core over one of those streams.
+// (ito_call_jni.cpp), which runs calls and carries sealed mailbox items over
+// those streams. The connection run serializes their I/O and owns closure.
 
 #pragma once
 

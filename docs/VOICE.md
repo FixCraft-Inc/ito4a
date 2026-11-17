@@ -47,19 +47,22 @@ that Settings does not offer, pending the separate I6 adaptation and
 total-wire/intelligibility tests. Settings states the fixed audio quality.
 
 An active foreground audio call may continue when the Activity leaves the
-screen. An ordinary data/test call still stops on backgrounding. App lock
+screen. Without the opt-in messaging service, an ordinary data/test call stops
+on backgrounding. App lock
 locks local access on backgrounding while an already authorized media session
 retains only its existing native/device borrowers. Ending that foreground call
-while the Activity is hidden also stops its retained transport connection.
+while the Activity is hidden also stops its retained transport connection
+unless the messaging service still owns it.
 New calls, messages, imports
 and key access remain refused while locked. If history cannot be written while
 locked or storage is unavailable, the end view states that it was not saved.
 The service is nonsticky: process death stops audio and does not reconnect or
 restart recording. Rotation preserves the process call owner.
 
-Calls require foreground user interaction and confidential invitation exchange.
-There is no sleeping-phone ringing, push registration, background incoming-call
-delivery or automatic call restart. Device tests must separately establish
+The [messaging lifecycle](MESSAGING_LIFECYCLE.md) owns incoming ringing and
+opt-in background reachability. Answering and starting audio require foreground
+user interaction. There is no push registration or automatic call restart.
+Device tests must separately establish sleeping-phone reachability,
 intelligibility, end-to-end delay, focus/routing, handover, battery and cleanup.
 Codec execution, debug APK packaging and emulator callbacks do not qualify
 physical audio or voice readiness. ARM64 runtime, cold allocation/resource

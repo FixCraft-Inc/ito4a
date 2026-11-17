@@ -1,7 +1,12 @@
 package com.fixcraft.ito.ui
 
 import android.content.ActivityNotFoundException
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Intent
+import android.provider.Settings
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,15 +41,33 @@ import com.fixcraft.ito.domain.Presentation
  */
 @Composable
 fun SettingsPage(preferences: Preferences, onPresentation: (Presentation) -> Unit = {},
-                 lockEnabled: Boolean = false, onLock: () -> Unit = {}, onLicenses: () -> Unit = {}) {
+                 lockEnabled: Boolean = false, onLock: () -> Unit = {}, onLicenses: () -> Unit = {},
+                 onBackground: (Boolean) -> Unit = {}, onNotificationText: (Boolean) -> Unit = {}) {
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+        onBackground(allowed)
+    }
+    val context = LocalContext.current
     PageColumn {
         SectionTitle(R.string.settings_privacy)
         // Turning the lock on or off starts platform authentication. The switch
         // shows the stored state and changes only after authentication succeeds.
         SwitchRow(R.string.app_lock, R.string.app_lock_description, lockEnabled) { onLock() }
         SupportingText(R.string.app_lock_requirements)
+        SwitchRow(R.string.messaging_background, R.string.messaging_background_description, preferences.backgroundMessages) { enabled ->
+            if (enabled && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else onBackground(enabled)
+        }
+        SwitchRow(R.string.messaging_text, R.string.messaging_text_description, preferences.notificationText, onNotificationText)
         Spacer(Modifier.height(32.dp))
         SectionTitle(R.string.calls)
+        if (Build.VERSION.SDK_INT >= 34) {
+            SupportingText(R.string.incoming_full_screen_description)
+            TextButton(onClick = {
+                try { context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                    ("package:" + context.packageName).toUri())) }
+                catch (_: ActivityNotFoundException) { /* Incoming notifications remain available. */ }
+            }) { Text(stringResource(R.string.incoming_full_screen)) }
+        }
         StatusRow(R.string.call_route, R.string.call_route_value)
         StatusRow(R.string.call_audio, R.string.call_audio_value)
         Spacer(Modifier.height(24.dp))

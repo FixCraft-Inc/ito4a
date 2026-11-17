@@ -30,16 +30,12 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
-import androidx.compose.ui.test.isHeading
-import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
-import androidx.compose.ui.test.performTextReplacement
-import androidx.compose.ui.test.printToString
 import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -50,7 +46,7 @@ import com.fixcraft.ito.ItoApplication
 import com.fixcraft.ito.MainActivity
 import com.fixcraft.ito.R
 import com.fixcraft.ito.ui.CallsModel
-import com.fixcraft.ito.ui.CallsPage
+import com.fixcraft.ito.ui.ChatsPage
 import com.fixcraft.ito.ui.ItoTheme
 import com.fixcraft.ito.ui.QrCameraChoice
 import com.fixcraft.ito.ui.QrCode
@@ -71,13 +67,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
-/**
- * Call screens on the app's own book, driven only through the UI: identity,
- * contact code, adding and verifying a contact, a changed key, scanning with
- * the camera permission requested at scan time, the secure invitation code,
- * and the checks for dark theme, large text, keyboard and screen-reader
- * labels. A fresh install is assumed: the worker installs without grants.
- */
+/** Identity, legacy-contact migration, shared scanner and accessibility on a fresh install. */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class CallFlowsTest {
@@ -106,47 +96,17 @@ class CallFlowsTest {
         assertFalse(exists(hasText(text(R.string.create_identity_description))))
         click(text(R.string.create_identity))
         waitForContacts()
-        val own = (book.state.value as BookState.Ready).identity!!
         assertTrue("the application window must stay secure", secure())
-        snapshot("home-light")
-        scrollTo(hasContentDescription(text(R.string.your_contact_code_qr)))
-        assertTrue(exists(hasContentDescription(text(R.string.your_contact_code_qr))))
-        assertTrue(exists(hasText(own.code)))
-        assertTrue(exists(hasText(grouped(own.fingerprint))))
-        snapshot("contact-code-light")
-
-        withPeer { peer, replacement ->
-            // A refusal the screen explains, with nothing added.
-            addThroughScreen("Me", own.code)
-            compose.waitUntil(5000) { exists(hasText(text(R.string.refusal_own_code))) }
-            assertTrue((book.state.value as BookState.Ready).contacts.isEmpty())
-            click(text(R.string.cancel))
-
-            addThroughScreen("Rin", peer.code)
-            compose.waitUntil(5000) { exists(hasText(text(R.string.trust_unverified))) }
-            assertTrue(exists(hasText(grouped(peer.fingerprint))))
-            assertFalse("an unverified contact offers a call", exists(hasText(text(R.string.call_contact)) and hasClickAction()))
-            snapshot("contact-unverified")
-            click(text(R.string.fingerprints_match))
-            compose.waitUntil(5000) { exists(hasText(text(R.string.trust_verified))) }
-            assertTrue(contact(peer.code).verified)
-
-            // Without a connection a call cannot start, and the contact's screen says why.
-            compose.waitUntil(5000) { exists(hasText(text(R.string.call_needs_connection))) }
-            assertTrue(exists(hasText(text(R.string.call_contact)) and isNotEnabled()))
-            assertTrue(exists(hasText(text(R.string.open_service)) and hasClickAction()))
-
-            // The contact's key changed: the old key is blocked, the new one starts unverified.
-            click(text(R.string.key_changed))
-            compose.onNode(hasText(text(R.string.new_contact_code)) and hasSetTextAction()).performTextReplacement(replacement.code)
-            click(text(R.string.replace_key))
-            compose.waitUntil(5000) { exists(hasText(text(R.string.key_new_notice))) }
-            assertTrue(contact(peer.code).blocked)
-            assertFalse(contact(replacement.code).verified)
-            snapshot("contact-new-key")
-            // The top bar's Back returns to the list, where the old key reads as replaced.
-            compose.onNode(hasContentDescription(text(R.string.back)) and hasClickAction()).performClick()
-            compose.waitUntil(5000) { exists(hasText(text(R.string.trust_replaced))) }
+        snapshot("chats-light")
+        withPeer { peer, _ ->
+            book.addContact(peer.code, "Rin")
+            app.messenger.initialize()
+            click("Rin")
+            compose.waitUntil(5000) { exists(hasText(text(R.string.chat_pair_again)) and hasClickAction()) }
+            assertFalse("legacy contact exposed a message composer", exists(hasSetTextAction()))
+            snapshot("legacy-pair-again")
+            device.pressBack()
+            waitForContacts()
         }
     }
 
@@ -154,7 +114,7 @@ class CallFlowsTest {
         ensureIdentity()
         assertEquals("the camera is granted before any scan", PackageManager.PERMISSION_DENIED,
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA))
-        click(text(R.string.answer_invitation))
+        click(text(R.string.chat_scan))
         compose.waitUntil(5000) { secure() }
         val allow = device.wait(Until.findObject(By.res("com.android.permissioncontroller:id/permission_allow_foreground_only_button")), 10_000)
             ?: device.wait(Until.findObject(By.textContains("While using")), 2000)
@@ -211,7 +171,7 @@ class CallFlowsTest {
             compose.activity.setContent {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(true) then DeviceConfigurationOverride.FontScale(2f)) {
                     // The app's Scaffold paints the theme's background behind the page.
-                    ItoTheme { Surface(color = MaterialTheme.colorScheme.background) { CallsPage(model) {} } }
+                    ItoTheme { Surface(color = MaterialTheme.colorScheme.background) { ChatsPage(model, "home", {}, false) {} } }
                 }
             }
         }
@@ -227,19 +187,13 @@ class CallFlowsTest {
                 node.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.joinToString()
             assertTrue("an action without a label: ${node.config}", spoken.isNotBlank())
         }
-        assertTrue(compose.onAllNodes(isHeading()).fetchSemanticsNodes().size >= 2)
-        // The primary action and collapsed public code remain reachable at 2x.
-        scrollTo(hasText(text(R.string.answer_invitation)))
-        snapshot("home-dark-2x-end")
-        click(text(R.string.show_contact_code))
-        scrollTo(hasContentDescription(text(R.string.your_contact_code_qr)))
-        assertTrue(exists(hasText((app.callBook.state.value as BookState.Ready).identity!!.code)))
-        snapshot("contact-code-dark-2x")
+        scrollTo(hasText(text(R.string.chat_scan)) and hasClickAction())
+        snapshot("chats-dark-2x-end")
     }
 
     @Test fun e_keyboardReachesAndActivatesActions() {
         ensureIdentity()
-        compose.onNode(hasText(text(R.string.calls)) and isSelectable()).performClick()
+        compose.onNode(hasText(text(R.string.chats)) and isSelectable()).performClick()
         val target = hasText(text(R.string.add_contact)) and hasClickAction()
         compose.onNode(hasScrollAction()).performScrollToNode(target)
         // Real key events from the emulator's hardware keyboard, through the window.
@@ -251,8 +205,8 @@ class CallFlowsTest {
         }
         assertTrue("Tab never reached Add contact", focused)
         device.pressKeyCode(KeyEvent.KEYCODE_ENTER)
-        compose.waitUntil(5000) { exists(hasText(text(R.string.contact_name)) and hasSetTextAction()) }
-        click(text(R.string.cancel))
+        compose.waitUntil(5000) { exists(hasText(text(R.string.chat_show_code)) and hasClickAction()) }
+        device.pressBack()
     }
 
     @Test fun f_scannerReleasesTheCameraOnFastCancelAndWhenLeaving() {
@@ -270,12 +224,12 @@ class CallFlowsTest {
         try {
             // Cancel while the camera may still be opening. A late open must
             // still close: after the scanner settles, the camera is free.
-            click(text(R.string.answer_invitation))
+            click(text(R.string.chat_scan))
             click(text(R.string.cancel))
             Thread.sleep(2000)
             await { available.get() == true }
             // Leaving the app ends the scan and releases a running camera.
-            click(text(R.string.answer_invitation))
+            click(text(R.string.chat_scan))
             compose.waitUntil(20_000) {
                 exists(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, text(R.string.camera_scanning)))
             }
@@ -295,7 +249,7 @@ class CallFlowsTest {
     }
 
     private fun waitForContacts() {
-        compose.waitUntil(10_000) { exists(hasText(text(R.string.contacts)) and isHeading()) }
+        compose.waitUntil(10_000) { exists(hasText(text(R.string.add_contact)) and hasClickAction()) }
     }
 
     private fun scrollTo(matcher: SemanticsMatcher) {
@@ -309,8 +263,10 @@ class CallFlowsTest {
         try {
             val identities = directories.mapIndexed { index, directory ->
                 CallBook(IdentityStore(directory, AndroidIdentityKeys("$alias.$index"), { })) { 1_800_000_000 }
-                    .also { it.open(); it.createIdentity() }
-                    .let { (it.state.value as BookState.Ready).identity!! }
+                    .let { book ->
+                        try { book.open(); book.createIdentity(); (book.state.value as BookState.Ready).identity!! }
+                        finally { book.close() }
+                    }
             }
             block(identities[0], identities[1])
         } finally {
@@ -319,23 +275,6 @@ class CallFlowsTest {
             directories.indices.forEach { keys.deleteEntry("$alias.$it") }
         }
     }
-
-    private fun addThroughScreen(name: String, code: String) {
-        click(text(R.string.add_contact))
-        val field = hasText(text(R.string.contact_name)) and hasSetTextAction()
-        try {
-            compose.waitUntil(5000) { exists(field) }
-        } catch (timeout: Throwable) {
-            throw AssertionError("no name field on: " + compose.onRoot(useUnmergedTree = true).printToString(), timeout)
-        }
-        compose.onNode(hasText(text(R.string.contact_name)) and hasSetTextAction()).performTextReplacement(name)
-        compose.onNode(hasText(text(R.string.contact_code)) and hasSetTextAction()).performTextReplacement(code)
-        click(text(R.string.add))
-    }
-
-    private fun contact(code: String) = (app.callBook.state.value as BookState.Ready).contacts.single { it.code == code }
-
-    private fun grouped(fingerprint: String) = fingerprint.chunked(4).chunked(4).joinToString("\n") { it.joinToString(" ") }
 
     private fun secure(): Boolean {
         var flags = 0

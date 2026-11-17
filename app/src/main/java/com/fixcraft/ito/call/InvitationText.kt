@@ -5,7 +5,7 @@ import java.util.Base64
 /**
  * The text an invitation QR code carries: `ito-invitation:1:` and the
  * unpadded base64url of the signed invitation. It holds the invitation PSK.
- * Only the secure invitation screen draws it and only the scanner reads it.
+ * Retained for diagnostic profiles and recognizing legacy scanner input.
  * It never reaches the clipboard, a share sheet, an Intent or saved state
  * (CALL_SECURITY). This frames the bytes; the core validates them.
  */

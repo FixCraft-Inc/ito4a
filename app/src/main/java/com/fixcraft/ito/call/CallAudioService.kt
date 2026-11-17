@@ -135,7 +135,7 @@ class CallAudioService : Service() {
         if (started && app.calls.view.value.phase == CallPhase.Media) app.calls.cancel()
         super.onDestroy()
         destroyed = true
-        if (started && !app.appLock.isForeground()) app.connections.stop()
+        if (started && !app.appLock.isForeground() && !app.backgroundForeground.value) app.connections.stop(pause = false)
         finishAudio()
         // The separate owner keeps this guard while Android setup/cleanup
         // still borrows devices or can call back into this attempt.

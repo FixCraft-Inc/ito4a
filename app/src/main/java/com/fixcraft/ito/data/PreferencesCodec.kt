@@ -26,8 +26,9 @@ object PreferencesCodec {
             val schema = root.get("schema")
             val keys = setOf("schema", "routing", "audio", "services")
             require((schema == 1 && root.keys().asSequence().toSet() == keys) ||
-                (schema == 2 && root.keys().asSequence().toSet() == keys + "presentation"))
-            val presentation = if (schema == 2) Presentation.valueOf(string(root, "presentation")) else Presentation.Simple
+                (schema == 2 && root.keys().asSequence().toSet() == keys + "presentation") ||
+                (schema == 3 && root.keys().asSequence().toSet() == keys + setOf("presentation", "backgroundMessages", "notificationText")))
+            val presentation = if (schema == 2 || schema == 3) Presentation.valueOf(string(root, "presentation")) else Presentation.Simple
             val routing = RoutingPreference.valueOf(string(root, "routing"))
             val audio = AudioPreference.valueOf(string(root, "audio"))
             val list = root.getJSONArray("services")
@@ -42,7 +43,9 @@ object PreferencesCodec {
                 requireNotNull(origin)
                 SavedService(id, string(entry, "name"), origin)
             }
-            return Preferences(routing, audio, services, presentation)
+            val background = if (schema == 3) boolean(root, "backgroundMessages") else false
+            val textVisible = if (schema == 3) boolean(root, "notificationText") else true
+            return Preferences(routing, audio, services, presentation, background, textVisible)
         } catch (_: JSONException) {
             throw InvalidPreferences()
         } catch (_: IllegalArgumentException) {
@@ -56,16 +59,24 @@ object PreferencesCodec {
         return value
     }
 
+    private fun boolean(value: JSONObject, name: String): Boolean {
+        val field = value.get(name)
+        require(field is Boolean)
+        return field
+    }
+
     fun encode(preferences: Preferences): String {
         val services = JSONArray()
         for (service in preferences.services) {
             services.put(JSONObject().put("id", service.id.toString())
                 .put("name", service.name).put("origin", service.origin.value))
         }
-        return JSONObject().put("schema", 2)
+        return JSONObject().put("schema", 3)
             .put("routing", preferences.routing.name)
             .put("audio", preferences.audio.name)
             .put("services", services)
-            .put("presentation", preferences.presentation.name).toString()
+            .put("presentation", preferences.presentation.name)
+            .put("backgroundMessages", preferences.backgroundMessages)
+            .put("notificationText", preferences.notificationText).toString()
     }
 }

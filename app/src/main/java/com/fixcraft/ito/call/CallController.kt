@@ -29,8 +29,9 @@ enum class CallLocalFailure { Content, Audio }
 
 /**
  * What screens show about the one attempt. [invitation] is the initiator's
- * signed invitation while it waits for the responder. It holds the
- * invitation PSK and is shown only as a QR code on a secure screen.
+ * signed invitation for diagnostic profiles while waiting for the responder.
+ * It holds the invitation PSK. Profile 3 sends the invitation through the
+ * ratchet callback and keeps it out of screen state.
  */
 data class CallView(
     val phase: CallPhase = CallPhase.Idle,
@@ -55,6 +56,7 @@ data class CallView(
     val durationMs: Long = 0,
     val historySaved: Boolean = false,
     val localFailure: CallLocalFailure? = null,
+    val ringEnd: Int = 0,
 ) {
     /** Leaves out the invitation, which holds the PSK, and the peer key. */
     override fun toString() = "CallView(phase=$phase, initiator=$initiator, result=$result, " +
@@ -79,6 +81,8 @@ class CallController(
     private val onMessage: (ByteArray, ByteArray, Boolean, ByteArray) -> Unit = { _, _, _, _ -> },
     private val profile: Int = 1,
     private val canStart: () -> Boolean = { true },
+    private val onInvitation: (ByteArray, ByteArray) -> Unit = { _, _ -> },
+    private val onFinished: (CallView) -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableView = MutableStateFlow(CallView())
@@ -111,7 +115,7 @@ class CallController(
 
     fun beginContent() {
         requireAccess()
-        check(profile == 2)
+        check(profile == 2 || profile == 3)
         check(view.value.phase == CallPhase.Media && view.value.peerAuthenticated)
         synchronized(contentLock) { contentRequested = true }
     }
@@ -147,7 +151,7 @@ class CallController(
         } finally { frame.fill(0) }
     }
 
-    fun call(peer: ByteArray, lifetimeSeconds: Int = DEFAULT_LIFETIME) = start(true, peer, null) { store, fingerprint ->
+    fun call(peer: ByteArray, lifetimeSeconds: Int = if (profile == 3) 90 else DEFAULT_LIFETIME) = start(true, peer, null) { store, fingerprint ->
         CallNative.callCreateInitiator(store, peer, fingerprint, SERVICE, lifetimeSeconds, clock(), profile)
     }
 
@@ -160,6 +164,27 @@ class CallController(
             CallNative.callCreateResponder(store, opened, fingerprint, SERVICE, clock())
         }
         catch (failure: CallFailure) { CallNative.invitationDestroy(opened); throw failure }
+    }
+
+    /** Takes the authenticated handle. Acceptance precedes the core's first JOIN. */
+    fun answerRing(invitation: Long, peer: ByteArray) {
+        if (profile != 3) {
+            CallNative.invitationDestroy(invitation)
+            error("Incoming ringing requires profile 3")
+        }
+        var owned = invitation
+        start(false, peer, null, cleanup = {
+            if (owned != 0L) { CallNative.invitationDestroy(owned); owned = 0 }
+        }) { store, fingerprint ->
+            CallNative.callCreateResponder(store, owned, fingerprint, SERVICE, clock()).also { owned = 0 }
+        }
+    }
+
+    /** Only the ringing owner calls this after matching an authenticated contact and invitation ID. */
+    fun remoteRingEnd(reason: Int) {
+        require(reason in 1..4)
+        view { it.copy(ringEnd = reason) }
+        cancel()
     }
 
     fun decide(accept: Boolean) = withHandle { CallNative.callDecide(it, accept) }
@@ -253,16 +278,16 @@ class CallController(
     }
 
     private fun start(initiator: Boolean, peer: ByteArray?, secret: ByteArray?,
-                      create: (store: Long, fingerprint: ByteArray) -> Long) {
-        try { requireAccess() } catch (error: Exception) { secret?.fill(0); throw error }
+                      cleanup: () -> Unit = {}, create: (store: Long, fingerprint: ByteArray) -> Long) {
+        try { requireAccess() } catch (error: Exception) { secret?.fill(0); cleanup(); throw error }
         // One attempt at a time, including a canceled one whose lane still runs.
         if (attempt?.isCompleted == false || synchronized(handleLock) { handle != 0L }) {
-            secret?.fill(0)
+            secret?.fill(0); cleanup()
             return
         }
-        if (!canStart()) { secret?.fill(0); return }
+        if (!canStart()) { secret?.fill(0); cleanup(); return }
         if ((book.state.value as? BookState.Ready)?.identity == null) {
-            secret?.fill(0)
+            secret?.fill(0); cleanup()
             view { CallView(phase = CallPhase.Ended, initiator = initiator, peer = peer, startFailure = CallStartFailure.NoIdentity) }
             return
         }
@@ -296,11 +321,12 @@ class CallController(
                 // The worker entry contains anything else as a typed end.
                 ended(number, CallStartFailure.Transport, 0)
             } finally {
-                secret?.fill(0)
+                secret?.fill(0); cleanup()
                 audioReceiver.set(null)
                 val duration = (System.nanoTime() - startedAt) / 1_000_000
                 view { if (generation.get() == number) it.copy(durationMs = duration) else it }
                 try {
+                    onFinished(view.value)
                     onEnded(view.value)
                     view { if (generation.get() == number) it.copy(historySaved = true) else it }
                 } catch (_: Exception) {
@@ -366,11 +392,18 @@ class CallController(
 
     private suspend fun monitor(number: Long, call: Long, authorityValid: () -> Boolean) {
         var authorityReported = false
+        var invitationSent = false
         while (scope.isActive) {
             val status = CallNative.callStatus(call)
             if (!authorityReported && !authorityValid()) {
                 CallNative.callAuthorityLost(call)
                 authorityReported = true
+            }
+            if (profile == 3 && !invitationSent && status.has(CallNative.FLAG_INITIATOR) &&
+                status.has(CallNative.FLAG_INVITATION_READY)) {
+                val invitation = requireNotNull(CallNative.callInvitation(call))
+                try { onInvitation(status.peerKey, invitation); invitationSent = true }
+                finally { invitation.fill(0) }
             }
             drain(number, call, 32)
             publish(number, status, 0)
@@ -397,7 +430,7 @@ class CallController(
         repeat(maximum) {
             val payload = CallNative.callReceive(call) ?: return
             try {
-                if (profile == 2) {
+                if (profile == 2 || profile == 3) {
                     val frame = synchronized(contentLock) {
                         if (content == null) {
                             content = ContentSession(::sendContent)
@@ -447,7 +480,7 @@ class CallController(
     private fun publish(number: Long, status: CallStatus, result: Int) = view { current ->
         if (generation.get() != number) return@view current
         var invitation = current.invitation
-        if (current.initiator && invitation == null && status.has(CallNative.FLAG_INVITATION_READY)) {
+        if (profile != 3 && current.initiator && invitation == null && status.has(CallNative.FLAG_INVITATION_READY)) {
             val call = handleOrZero()
             if (call != 0L) invitation = CallNative.callInvitation(call)
         }

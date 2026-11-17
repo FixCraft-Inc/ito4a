@@ -1,25 +1,9 @@
 package com.fixcraft.ito.content
 
 import android.content.Context
-import android.system.Os
-import android.system.OsConstants
 import com.fixcraft.ito.security.AppLockController
-import com.fixcraft.ito.security.AppLockedException
-import com.fixcraft.ito.security.LockUnavailableException
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
-import java.nio.file.Files
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import java.nio.file.StandardCopyOption.ATOMIC_MOVE
-import java.nio.file.StandardCopyOption.REPLACE_EXISTING
-import java.nio.file.StandardOpenOption.READ
-import java.nio.file.StandardOpenOption.WRITE
-import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 /**
  * Process-owned encrypted local messages and communication history. No audio,
@@ -37,7 +21,7 @@ class LocalContentRepository internal constructor(
     constructor(context: Context, lock: AppLockController) : this(
         File(context.applicationContext.noBackupFilesDir, "ito-content"),
         { operation -> lock.withContentKey(operation) }, lock::requireAccess,
-        ::syncAndroidDirectory, { System.currentTimeMillis() / 1000 },
+        ::syncContentDirectory, { System.currentTimeMillis() / 1000 },
     )
 
     @Synchronized fun recordCall(peer: ByteArray, initiator: Boolean, result: Int, timeUnix: Long, durationMs: Long) {
@@ -108,102 +92,23 @@ class LocalContentRepository internal constructor(
         }
     }
 
-    private fun load(): ContentSnapshot = storage {
-        prepare()
-        val path = File(directory, RECORD).toPath()
-        if (!Files.exists(path, NOFOLLOW_LINKS)) return@storage ContentSnapshot()
-        if (!Files.isRegularFile(path, NOFOLLOW_LINKS) || Files.getPosixFilePermissions(path, NOFOLLOW_LINKS) != FILE_MODE)
-            throw ContentException(ContentFailure.Corrupt)
-        val size = Files.size(path)
-        if (size !in OVERHEAD.toLong()..(ContentCodec.MAX_SNAPSHOT_BYTES + OVERHEAD).toLong()) throw ContentException(ContentFailure.Corrupt)
-        val sealed = ByteArray(size.toInt())
-        try {
-            Files.newByteChannel(path, setOf(READ, NOFOLLOW_LINKS)).use { input ->
-                val target = ByteBuffer.wrap(sealed)
-                while (target.hasRemaining()) if (input.read(target) < 0) throw ContentException(ContentFailure.Corrupt)
-                if (input.read(ByteBuffer.allocate(1)) != -1) throw ContentException(ContentFailure.Corrupt)
-            }
-            if (!sealed.copyOfRange(0, HEADER.size).contentEquals(HEADER)) throw ContentException(ContentFailure.Corrupt)
-            val plain = useKey { key ->
-                val cipher = Cipher.getInstance(TRANSFORMATION)
-                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, sealed, HEADER.size, 12))
-                cipher.updateAAD(DOMAIN)
-                try { cipher.doFinal(sealed, HEADER.size + 12, sealed.size - HEADER.size - 12) }
-                catch (_: javax.crypto.BadPaddingException) { throw ContentException(ContentFailure.Corrupt) }
-            }
-            try { ContentCodec.decode(plain) } finally { plain.fill(0) }
-        } finally { sealed.fill(0) }
+    /** Migration reads every retained record before applying a new retention policy. */
+    @Synchronized internal fun migrationSnapshot(): ContentSnapshot {
+        requireAccess()
+        return load()
     }
 
-    private fun persist(snapshot: ContentSnapshot) = storage {
+    private val file = EncryptedContentFile(directory, "snapshot.bin", ".snapshot.tmp",
+        byteArrayOf(73, 84, 79, 67, 1), "ito/content-storage/snapshot/1".toByteArray(Charsets.US_ASCII),
+        ContentCodec.MAX_SNAPSHOT_BYTES, useKey, requireAccess, syncDirectory)
+
+    private fun load(): ContentSnapshot {
+        val plain = file.load() ?: return ContentSnapshot()
+        return try { ContentCodec.decode(plain) } finally { plain.fill(0) }
+    }
+
+    private fun persist(snapshot: ContentSnapshot) {
         val plain = ContentCodec.encode(snapshot)
-        val sealed = try {
-            useKey { key ->
-                val cipher = Cipher.getInstance(TRANSFORMATION)
-                cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
-                cipher.updateAAD(DOMAIN)
-                val body = cipher.doFinal(plain)
-                try {
-                    if (cipher.iv.size != 12) throw ContentException(ContentFailure.KeyUnavailable)
-                    HEADER + cipher.iv + body
-                } finally { body.fill(0) }
-            }
-        } finally { plain.fill(0) }
-        var replaced = false
-        val temporary = File(directory, TEMPORARY).toPath()
-        try {
-            Files.createFile(temporary, PosixFilePermissions.asFileAttribute(FILE_MODE))
-            FileChannel.open(temporary, WRITE, NOFOLLOW_LINKS).use { output ->
-                val source = ByteBuffer.wrap(sealed)
-                while (source.hasRemaining()) output.write(source)
-                output.force(true)
-            }
-            Files.move(temporary, File(directory, RECORD).toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
-            replaced = true
-            syncDirectory(directory)
-        } catch (_: Exception) { throw ContentException(if (replaced) ContentFailure.Ambiguous else ContentFailure.Io) }
-        finally { sealed.fill(0); Files.deleteIfExists(temporary) }
-    }
-
-    private fun prepare() {
-        val path = directory.toPath()
-        if (!directory.isAbsolute) throw ContentException(ContentFailure.Io)
-        if (!Files.exists(path, NOFOLLOW_LINKS)) {
-            Files.createDirectory(path, PosixFilePermissions.asFileAttribute(DIRECTORY_MODE))
-            syncDirectory(directory.parentFile)
-        }
-        if (!Files.isDirectory(path, NOFOLLOW_LINKS) || Files.getPosixFilePermissions(path, NOFOLLOW_LINKS) != DIRECTORY_MODE)
-            throw ContentException(ContentFailure.Io)
-        val temporary = File(directory, TEMPORARY).toPath()
-        if (Files.exists(temporary, NOFOLLOW_LINKS)) {
-            if (!Files.isRegularFile(temporary, NOFOLLOW_LINKS)) throw ContentException(ContentFailure.Corrupt)
-            Files.delete(temporary)
-            syncDirectory(directory)
-        }
-    }
-
-    private fun <T> storage(operation: () -> T): T = try { operation() }
-    catch (failure: ContentException) { throw failure }
-    catch (_: AppLockedException) { throw ContentException(ContentFailure.KeyUnavailable) }
-    catch (_: LockUnavailableException) { throw ContentException(ContentFailure.KeyUnavailable) }
-    catch (_: java.security.GeneralSecurityException) { throw ContentException(ContentFailure.KeyUnavailable) }
-    catch (_: Exception) { throw ContentException(ContentFailure.Io) }
-
-    companion object {
-        private const val RECORD = "snapshot.bin"
-        private const val TEMPORARY = ".snapshot.tmp"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private val HEADER = byteArrayOf(73, 84, 79, 67, 1)
-        private const val OVERHEAD = 5 + 12 + 16
-        private val DOMAIN = "ito/content-storage/snapshot/1".toByteArray(Charsets.US_ASCII)
-        private val FILE_MODE = PosixFilePermissions.fromString("rw-------")
-        private val DIRECTORY_MODE = PosixFilePermissions.fromString("rwx------")
-        private fun syncAndroidDirectory(directory: File) {
-            val descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC, 0)
-            try {
-                if (!OsConstants.S_ISDIR(Os.fstat(descriptor).st_mode)) throw ContentException(ContentFailure.Io)
-                Os.fsync(descriptor)
-            } finally { Os.close(descriptor) }
-        }
+        try { file.replace(plain) } finally { plain.fill(0) }
     }
 }

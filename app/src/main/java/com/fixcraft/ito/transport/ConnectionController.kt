@@ -34,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -70,6 +71,9 @@ class CallLane(val service: String, val use: (stream: Long, fingerprint: ByteArr
 }
 
 class CallLaneUnavailable : Exception("no connected run")
+/** A run-owned mailbox worker; true asks for a bounded retry on this same endpoint. */
+class MailboxLane(val service: String, val failed: () -> Unit = {}, val stopped: () -> Unit = {},
+    val use: (stream: Long, fingerprint: ByteArray, authorityValid: () -> Boolean) -> Boolean)
 data class DataReceipt(val kind: String, val bytes: Int, val sha256: String, val peer: String, val generation: Long, val network: Long,
     val nativeBytesSent: Long, val nativeBytesReceived: Long)
 data class ConnectionState(
@@ -85,11 +89,12 @@ data class ConnectionState(
     val generation: Long = 0,
     val boundSockets: Int = 0,
     val receipts: List<DataReceipt> = emptyList(),
+    val mailboxAvailable: Boolean = false,
 )
 
 /** One process owns the store and every native handle. Activity recreation retains no secret. */
 class ConnectionController(context: Context, private val services: ConnectionServices? = null,
-    private val requireAccess: () -> Unit = {}) {
+    private val requireAccess: () -> Unit = {}, private val mailbox: MailboxLane? = null) {
     private val app = context.applicationContext
     private val connectivity = app.getSystemService(ConnectivityManager::class.java)
     private val store = ConfigurationStore(app)
@@ -103,6 +108,11 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     private var initializationFailure = ConnectionFailure.Storage to 0
     private var importer: Job? = null
     private var importSignal: CancellationSignal? = null
+    private var foreground = false
+    private var background = false
+    private var paused = false
+    private var automatic: Job? = null
+    private var reconnectAttempt = 0
 
     private class Run(val generation: Long, val network: Network, val route: CapturedConnectionNetwork, val provider: String?) {
         val monitor = Any()
@@ -126,6 +136,10 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     private data class Probe(val packet: Boolean, val service: String, val host: String, val port: Int)
 
     init {
+        scope.launch { state.collect { value ->
+            if (value.phase == ConnectionPhase.Connected) reconnectAttempt = 0
+            scheduleConnection()
+        } }
         scope.launch {
             operations.withLock {
                 try {
@@ -266,7 +280,36 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         } finally { code.fill(0) }
     }
 
-    fun connect() = command { startRun() }
+    fun connect(): Job { paused = false; automatic?.cancel(); automatic = null; return command { startRun() } }
+
+    /** Foreground messaging never changes the selected service, Network or VPN policy. */
+    fun foreground(active: Boolean) {
+        foreground = active
+        scheduleConnection()
+    }
+
+    /** Set only while the explicit opt-in foreground service owns reachability. */
+    fun background(active: Boolean) {
+        background = active
+        scheduleConnection()
+    }
+
+    private fun scheduleConnection() {
+        automatic?.cancel(); automatic = null
+        if ((!foreground && !background) || paused || !initialized) return
+        val state = mutableState.value
+        val wait = reconnectDelay(state.phase, state.failure, state.nativeCode, reconnectAttempt) ?: return
+        automatic = scope.launch {
+            delay(wait)
+            automatic = null
+            command {
+                if ((!foreground && !background) || paused) return@command
+                if (withContext(Dispatchers.IO) { store.list().selectedId == null && services?.selectedForRestart() == null }) return@command
+                reconnectAttempt++
+                startRun()
+            }
+        }
+    }
 
     /** Reconnects on a renewed lease, unless a later Connect or Stop replaced [previous]. */
     private fun reconnectRenewed(previous: Run, next: SelectedService) = command {
@@ -295,12 +338,17 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         run.job.start()
     }
 
-    fun stop(): Job {
+    fun stop(pause: Boolean = true): Job {
+        if (pause) paused = true
+        automatic?.cancel(); automatic = null
         val wasStarting = mutableState.value.phase == ConnectionPhase.Starting
         importSignal?.cancel()
         importer?.cancel()
         return command(accessRequired = false) {
             stopRun()
+            // Process-owned cleanup also releases sessions opened while offline.
+            // An Activity's cancelled waiter must not cancel this work.
+            withContext(Dispatchers.IO) { mailbox?.stopped?.invoke() }
             reload()
             if (wasStarting) mutableState.value = mutableState.value.copy(failure = ConnectionFailure.Cancelled, nativeCode = ItoNative.CANCELLED)
         }
@@ -352,6 +400,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         var session: AutoCloseable? = null
         var authorityWatch: Job? = null
         var permit: ServicePermit? = null
+        var mailboxJob: Job? = null
         try {
                 callback = object : ConnectivityManager.NetworkCallback() {
                     override fun onLost(network: Network) {
@@ -464,6 +513,26 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                 checkAuthority()
                 val result = ItoNative.start(run.handle, 20_000)
                 if (result != ItoNative.OK) throw NativeFailure(result, "start")
+                val messaging = mailbox?.takeIf { it.service in description.streams }
+                publish(run) { it.copy(mailboxAvailable = messaging != null) }
+                if (messaging != null) mailboxJob = scope.launch(Dispatchers.IO) {
+                    var retry = 0
+                    while (!run.stopped.get()) {
+                        val again = try {
+                            val stream = ItoNative.openCallStream(run.handle, messaging.service)
+                            try {
+                                messaging.use(stream, ItoNative.callStreamFingerprint(stream)) {
+                                    !run.stopped.get() && capturedNetworkCurrent(run) && permit?.valid() != false
+                                }
+                            } finally { ItoNative.closeCallStream(stream) }
+                        } catch (failure: NativeFailure) {
+                            if (!run.stopped.get()) messaging.failed()
+                            failure.code in setOf(-5, -12, -15)
+                        }
+                        if (!again || run.stopped.get()) break
+                        delay(minOf(30_000L, 1000L shl retry.coerceAtMost(5))); retry++
+                    }
+                }
                 while (!run.stopped.get()) {
                     requireCapturedNetwork(run)
                     checkAuthority()
@@ -554,6 +623,9 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         } catch (_: SecurityException) {
             publish(run) { it.copy(phase = ConnectionPhase.Failed, failure = ConnectionFailure.NetworkUnavailable) }
         } finally {
+            run.stopped.set(true)
+            // The mailbox must return its stream before the endpoint is freed.
+            withContext(kotlinx.coroutines.NonCancellable) { mailboxJob?.cancelAndJoin() }
             authorityWatch?.cancel()
             // Refuses a lane still buffered when the run ended by itself.
             run.calls.cancel()
@@ -626,7 +698,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         val selectable = selectableConnectionNetworks(currentDefaultNetwork(), networks.map { (network, capabilities) ->
             describeNetwork(network, capabilities)
         }).map { it.handle }.toSet()
-        mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Idle, failure = ConnectionFailure.None, nativeCode = 0, providerCode = "",
+        mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Idle, failure = ConnectionFailure.None, nativeCode = 0, providerCode = "", mailboxAvailable = false,
             catalog = catalog, networks = networks.filter { it.first.networkHandle in selectable }.map { (network, capabilities) ->
                 NetworkChoice(network.networkHandle, capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
                     !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))

@@ -113,6 +113,14 @@ class CallBook internal constructor(private val storage: IdentityStore, private 
         return block(store)
     }
 
+    /** Close only after every call, invitation and message session returned its borrow. */
+    @Synchronized internal fun close() {
+        if (store != 0L) { CallNative.storeDestroy(store); store = 0 }
+        if (context != 0L) { CallNative.contextDestroy(context); context = 0 }
+        ambiguous = false
+        mutableState.value = BookState.Loading
+    }
+
     /** A call's spend could not confirm its publication, so the store latched. */
     @Synchronized fun publicationAmbiguous() {
         ambiguous = true

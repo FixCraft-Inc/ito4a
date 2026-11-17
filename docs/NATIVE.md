@@ -50,11 +50,13 @@ A cancellation owner calls `stop` on another worker, waits for the start or
 I/O borrower to return, then calls `destroy` once. `stop` wakes native I/O
 and drains the endpoint's workers. A handle must never be destroyed while
 another call borrows it. Status may overlap start, stop and one data call.
-The application serializes data calls and all handle replacement.
+The application serializes probes and call attempts. A dedicated mailbox
+stream has its own run-owned worker. Handle replacement joins both owners.
 
 No device is attached. The public ABI therefore makes exactly one attempt
-per start and does not retry after session loss. Kotlin owns explicit
-reconnect and network selection. The default selection captures the application's
+per start and does not retry after session loss. Kotlin owns automatic
+connection, reconnect and network selection under the
+[messaging lifecycle](MESSAGING_LIFECYCLE.md). The default selection captures the application's
 system default `Network`, including a VPN, for both DNS and sockets. Explicit
 physical-network selection requires an internet-capable application default
 without a VPN; a stale or unavailable selection is refused without choosing
@@ -65,7 +67,13 @@ Network requests Stop. It latches that request before the Main owner joins nativ
 borrowers, destroys the handle and reports `NetworkLost`. Registration precedes
 DNS, and route checks run before DNS, native start and each socket binding. Those
 checks and callbacks observe Android's changes; they are not an atomic lock on
-system routing. A new route always requires another explicit Connect action.
+system routing. A replacement run reacquires the same selected service and applies these
+network rules again. Automatic retries admit only network unavailability,
+network loss, DNS failure and public YUME TIMEOUT, CLOSED or IO_ERROR, with
+exponential delays capped at 30 seconds. Authentication, authority, input and
+storage failures require intervention. Disconnect pauses automatic attempts
+for this process. Connect resumes them. Backgrounding stops ordinary runs
+unless an active audio or opt-in messaging foreground service retains the run.
 The owner resolves the selected server through that captured Network and binds
 every native socket through the `SocketBinder`. The callback retains its Java object until endpoint
 destruction drains all native workers. Binding refusal or a callback exception
@@ -117,7 +125,10 @@ the pinned OpenSSL archive against its `tools/security-component.json`, builds
 OpenSSL and the core for each selected ABI with NDK 28.2.13676358, refuses a
 library that exports anything but the C interface or imports an OpenSSL symbol,
 and records the archive, sources, libraries and source commit in `provenance.json`. `-PitoOpenSslArchive`
-names the archive, by default `~/.cache/ito/openssl-3.5.9.tar.gz`.
+names the archive, by default `~/.cache/ito/openssl-3.5.9.tar.gz`. The builder
+exports `ito/call.h`, `ito/content.h` and `ito/message.h`; its
+`headers_sha256` provenance map binds each copy. Notice generation checks all
+three before packaging, and includes those bindings in the native source identity.
 `app/src/main/jni/Android.mk` packages it beside `libyume.so`, and
 `libitojni.so` links both. The notice generator binds `libitocall.so` by that
 provenance, and a changed OpenSSL archive requires a catalog review.
@@ -189,3 +200,67 @@ The application-owned call book remains open until process stop. These counts
 do not measure all descriptors, heap or platform resources, and a WAITING call
 does not establish peer authentication, MediaAuthorized or audio. The Wi-Fi
 case restores Wi-Fi and awaits the framework callback during cleanup.
+
+## Messenger sessions and mailbox
+
+`MessageNative` binds the portable `ito/message.h` interface in the same
+`libitocall.so`. Native code owns identity-2 upgrade, pairing, safety-code
+verification, ratchets and message sealing. Kotlin owns encrypted history,
+session persistence, the mailbox framing and foreground lifecycle. No
+protocol cryptography is duplicated in Kotlin. Session snapshots are bounded
+to 717,492 bytes. JNI clears borrowed plaintext sink arrays after return,
+contains exceptions and counts message handles separately. Message sessions
+close before their borrowed identity store.
+
+`Messenger` serializes pairing and sessions with a fair I/O lock, yielding to
+waiting commands between poll turns. Idle network waits borrow no identity
+store, so call admission can use the store on its separate lane. It opens every
+new inbox before displaying its pairing code or depositing an item naming it.
+The scanning side deposits the saved confirmation before opening its session.
+Mailbox targets must match the current authenticated server fingerprint and
+named `ito-mailbox` service. A target cannot select another service, network,
+provider or direct socket. A contact on another relay remains queued.
+
+One connection-run worker lends a dedicated mailbox stream alongside the
+serialized call/probe lane. Stop wakes it, joins it and closes its stream
+before destroying the endpoint. Framing enforces exact MAILBOX/1 lengths,
+a five-second partial-frame deadline and at most 512 pushed items or 8 MiB
+while waiting for request replies. Timeout/transport loss and service refusal
+can retry on the same endpoint with bounded backoff. Malformed protocol input
+ends the mailbox worker. Failure to open the stream is visible as a messenger
+transport error. No registration grants mailbox service access by itself.
+An idle new stream sends PING before its first wait, meeting the server's
+five-second first-frame budget even when there are no inboxes yet. REFUSED
+retains its protocol, capacity, timeout or invalid-request status.
+Explicit Stop also closes sessions opened while offline. This cleanup belongs
+to the process's connection owner and survives cancellation of an Activity waiter.
+
+`MessageBoundaryTest` exercises real JNI pairing, ratchets and storage
+ambiguity. `MessengerLiveTest` and `RingingLiveTest` are opt-in real-yumed
+journeys enabled by `m5aLive=true` and `m5bLive=true`, respectively, with
+private fixture kits staged under the target app's
+`no_backup/m5a-fixtures/{alice,bob}`. Ringing also needs a call relay behind
+the authenticated `ito-call` service. Default instrumentation excludes their
+`RequiresMessengerFixture` annotation. Synthetic UI galleries establish
+rendering only. Physical audio, camera, background and battery checks remain
+separate.
+
+For a disposable physical-device fixture, `m5bHostExport=true` additionally
+exports only the test's synthetic Bob identity and session under the target
+app's `no_backup/m5b-host/`, and enables background messaging after the journey.
+The private driver transfers that fixture to the Linux CLI, removes the export,
+and restarts the ordinary app to check incoming calls without instrumentation.
+These raw fixture snapshots are secrets and must stay outside Git and logs.
+The ringing journey also opens the isolated incoming activity through its
+notification, accepts a real invitation there and checks stale action tokens.
+Automatic full-screen display over a physical keyguard needs a separate phone
+pass with Android's full-screen alert permission recorded.
+
+Ringing uses `MessageNative.receiveRing`, a direct adapter to
+`ito_session_receive_ring`. WRONG_STATE returns no handle and leaves the item
+for ordinary receive. Other core refusals retain their status. A successful
+handle is counted, owned by the ringing coordinator and either destroyed or
+consumed by responder creation. Invitation metadata and its public ID come
+from the core's existing C interface. Kotlin reads only the canonical public
+ID prefix of its own locally created invitation for outgoing correlation,
+matching the Linux endpoint. Peer admission and clocks remain native.

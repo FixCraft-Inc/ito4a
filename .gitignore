@@ -18,3 +18,5 @@ local.properties
 *.hprof
 *.pcap
 *.pcapng
+__pycache__/
+*.py[cod]

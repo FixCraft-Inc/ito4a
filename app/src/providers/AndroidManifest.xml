@@ -11,10 +11,11 @@
     <application>
         <activity android:name="com.fixcraft.yume.provider.ProviderCallbackActivity"
             tools:ignore="AppLinkUrlError"
+            android:enabled="${providerCallbackEnabled}"
             android:exported="${providerCallbackEnabled}" android:noHistory="true"
             android:excludeFromRecents="true" android:theme="@android:style/Theme.NoDisplay">
             <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
+                <action android:name="${providerCallbackAction}" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="${providerCallbackHost}"

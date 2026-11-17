@@ -5,11 +5,10 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
-import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeDown
-import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 
@@ -40,18 +39,19 @@ internal class GalleryCapture(private val compose: ComposeContentTestRule) {
         if (!scroll) return
         for (index in 1..MAX_SCROLL_FRAMES) {
             if (compose.onAllNodes(hasScrollAction()).fetchSemanticsNodes().isEmpty()) return
-            compose.onAllNodes(hasScrollAction()).onLast()
-                .performTouchInput { swipeUp(startY = bottom * 0.85f, endY = top + bottom * 0.2f, durationMillis = 400) }
+            // Scroll the container directly. A drag starting over selectable
+            // text can open its toolbar and obscure this and subsequent frames.
+            val container = compose.onAllNodes(hasScrollAction()).onFirst()
+            val distance = container.fetchSemanticsNode().boundsInRoot.height * 0.65f
+            container.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, distance) }
             val next = screenshot()
             if (next.sameAs(previous)) break
             save("$name-$index", next)
             previous = next
         }
         // The next frame starts from the top of its page.
-        repeat(MAX_SCROLL_FRAMES + 1) {
-            compose.onAllNodes(hasScrollAction()).onLast()
-                .performTouchInput { swipeDown(startY = top + bottom * 0.2f, endY = bottom * 0.9f, durationMillis = 120) }
-        }
+        compose.onAllNodes(hasScrollAction()).onFirst()
+            .performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -Float.MAX_VALUE) }
         compose.waitForIdle()
     }
 

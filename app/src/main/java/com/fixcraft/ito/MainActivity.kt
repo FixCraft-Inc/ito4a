@@ -50,9 +50,11 @@ class MainActivity : ComponentActivity() {
             val lock by app.appLock.state.collectAsStateWithLifecycle()
             ItoTheme {
                 if (lock == LockState.Disabled || lock == LockState.Unlocked) {
+                    val incoming by app.ringing.incoming.collectAsStateWithLifecycle()
                     val state by model.state.collectAsStateWithLifecycle()
                     val notice by model.notice.collectAsStateWithLifecycle()
-                    ItoApp(state, notice, model, calls, page, { page = it }, lock == LockState.Unlocked) {
+                    if (incoming != null) com.fixcraft.ito.ui.IncomingCallScreen(requireNotNull(incoming), calls)
+                    else ItoApp(state, notice, model, calls, page, { page = it }, lock == LockState.Unlocked) {
                         authenticate(LockAction.Enable.takeIf { lock == LockState.Disabled } ?: LockAction.Disable)
                     }
                 } else {
@@ -64,12 +66,15 @@ class MainActivity : ComponentActivity() {
                         val call by app.calls.view.collectAsStateWithLifecycle()
                         call.phase != CallPhase.Idle && call.phase != CallPhase.Ended
                     } else false
-                    LockedScreen(locked, canStop = foregroundAudio, callActive = callActive,
+                    val background by app.backgroundForeground.collectAsStateWithLifecycle()
+                    val incoming by app.ringing.incoming.collectAsStateWithLifecycle()
+                    LockedScreen(locked, canStop = foregroundAudio || background, callActive = callActive,
+                        incomingCall = incoming != null, onDecline = { incoming?.let { app.ringing.decline(it.actionToken) } },
                         onUnlock = {
                             if (locked) authenticate(LockAction.Unlock)
                             else lifecycleScope.launch(Dispatchers.IO) { app.appLock.reload() }
                         },
-                        onEndCall = app.calls::cancel, onStop = { app.connections.stop() })
+                        onEndCall = app.calls::cancel, onStop = { app.ringing.stop(); app.connections.stop() })
                 }
             }
         }
@@ -138,21 +143,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        app.appLock.foreground()
+        app.activityStarted(this)
     }
 
     override fun onDestroy() {
         authentication?.cancel()
         challenge?.let(app.appLock::cancel)
         challenge = null
+        if (isFinishing) app.activityStopped(this)
         super.onDestroy()
     }
 
     override fun onStop() {
         super.onStop()
-        if (!isChangingConfigurations) {
-            app.appLock.background(challenge)
-            if (!app.callForeground) { app.calls.cancel(); app.connections.stop() }
-        }
+        app.activityStopped(this, challenge)
     }
 }

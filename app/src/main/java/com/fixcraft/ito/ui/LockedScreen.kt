@@ -31,12 +31,14 @@ import com.fixcraft.ito.R
 /**
  * Shown while the app is locked ([locked]) or its lock key is unavailable.
  * The Surface supplies the theme's content colour, so text stays readable in
- * dark mode. While the foreground audio owner exists ([canStop]) the screen
- * offers Disconnect, and End call during a call, without new key access.
+ * dark mode. While an audio or messaging foreground owner exists ([canStop])
+ * the screen offers Disconnect, and End call during an active call, without
+ * new key access. Pending invitations offer decline or unlock for acceptance.
  */
 @Composable
 fun LockedScreen(locked: Boolean, canStop: Boolean, callActive: Boolean,
-                 onUnlock: () -> Unit, onEndCall: () -> Unit, onStop: () -> Unit) {
+                 onUnlock: () -> Unit, onEndCall: () -> Unit, onStop: () -> Unit,
+                 incomingCall: Boolean = false, onDecline: () -> Unit = {}) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
@@ -47,6 +49,10 @@ fun LockedScreen(locked: Boolean, canStop: Boolean, callActive: Boolean,
             Text(stringResource(if (locked) R.string.app_locked else R.string.app_lock_unavailable),
                 style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
                 modifier = Modifier.widthIn(max = 480.dp))
+            if (incomingCall) {
+                Text(stringResource(R.string.incoming_unlock), style = MaterialTheme.typography.titleLarge)
+                OutlinedButton(onClick = onDecline) { Text(stringResource(R.string.decline)) }
+            }
             if (callActive) Button(onClick = onEndCall, modifier = Modifier.heightIn(min = 48.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error,
                     contentColor = MaterialTheme.colorScheme.onError)) { Text(stringResource(R.string.end_call)) }

@@ -1,7 +1,7 @@
 # Ito
 
 Ito (糸, Japanese for “thread”) is an independent Android communication app
-built for private audio calls, with text planned later. ITO is its wordmark,
+built for private messages and audio calls. ITO is its wordmark,
 not an acronym. The source is AGPL-3.0-or-later. Service operators may charge
 for access or require authorization to use their infrastructure.
 
@@ -9,8 +9,9 @@ for access or require authorization to use their infrastructure.
 
 Ito imports an operator’s sealed YUME configuration through Android’s document
 picker, keeps it encrypted with Android Keystore, and connects through public
-libyume without requiring a systemwide VPN. Select a configuration and network
-explicitly. The bounded stream and packet echo tests report payload counts and
+libyume without requiring a systemwide VPN. Select a configuration and network. While Ito is open, or the optional background service is running, it connects and retries
+transient connection loss through that selection. Disconnect pauses this
+automatic connection until Connect or process restart. The bounded stream and packet echo tests report payload counts and
 SHA-256 receipts. They require a server-authorized echo destination.
 
 Protected routing remains the default. Failed authentication, unavailable
@@ -21,21 +22,33 @@ selection and provisioning use the shared provider library.
 The [call core](https://github.com/FixCraft-Inc/ito/blob/main/call/README.md) holds a local communication identity
 and verified contacts, and carries an end-to-end authenticated test call
 through a [call relay](https://github.com/FixCraft-Inc/ito/blob/main/relay/README.md) over the selected YUME connection.
-The Linux `ito-call` endpoint runs the same core. The app's Calls tab creates
-the identity, adds and verifies contacts, shows a call invitation as a QR code
-and scans one with the camera. The Android [audio adapter](docs/VOICE.md)
-adds user-started mono Opus capture/playback and a foreground call service.
-Physical audio/routing and voice readiness require separate device evidence.
-Incoming ringing and push are not implemented in this app. The portable core
-implements pairing, ratcheted messages and ringing. The
-[messenger design](https://github.com/FixCraft-Inc/ito/blob/main/docs/MESSENGER.md)
-describes the app integration that remains.
+The Linux `ito-call` endpoint runs the same core. The app's Chats tab pairs
+contacts, compares safety codes and exchanges ratcheted text through a shared
+mailbox relay. It shows delivery/read receipts, per-chat history, local deletion
+and the shared auto-delete timer. Existing identity-1 contacts must pair again.
+All QR codes use one scanner, with an explanation for legacy or unknown input.
+Contacts on another relay wait for separate routing support.
 
-[Local content](docs/LOCAL_CONTENT.md) keeps bounded messages/history encrypted
-on this installation. [App lock](docs/APP_LOCK.md) adds optional platform
-authentication in Settings. The portable [content codec](https://github.com/FixCraft-Inc/ito/blob/main/docs/CONTENT_CHANNEL.md)
-supports synchronous chat over an authenticated call, without a chat screen
-or cloud storage.
+Verified, paired contacts call without another QR exchange. An authenticated
+incoming screen offers Accept and Decline before the responder joins. The
+screen can appear over the phone's lock screen when Android permits full-screen
+call alerts, with a ringing notification as fallback. The
+[audio adapter](docs/VOICE.md) supplies user-started mono Opus capture/playback
+and a separate foreground audio service. Settings can keep the selected
+mailbox connection open while Ito is closed, with a permanent notification.
+This is off by default. App lock delays authentication of newly arrived rings
+until unlock. [Android messaging lifecycle](docs/MESSAGING_LIFECYCLE.md)
+describes notification privacy, deadlines and interruption limits. Physical
+audio, battery/Doze and signed release qualification remain separate. Push is
+not implemented. The portable core's
+[messenger design](https://github.com/FixCraft-Inc/ito/blob/main/docs/MESSENGER.md)
+describes the complete composition.
+
+[Local content](docs/LOCAL_CONTENT.md) keeps per-chat messages, native sessions
+and history encrypted on this installation. [App lock](docs/APP_LOCK.md) adds
+optional platform authentication in Settings. The portable
+[content codec](https://github.com/FixCraft-Inc/ito/blob/main/docs/CONTENT_CHANNEL.md)
+also supports synchronous data above an authenticated call.
 
 Public service addresses and call preferences retain their own DataStore owner.
 Saving an address does not contact its server or grant transport authority.

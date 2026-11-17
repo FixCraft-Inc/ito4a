@@ -74,16 +74,34 @@ class NoticeGenerationTest(unittest.TestCase):
         self.write_call_provenance()
 
     def write_call_provenance(self, archive: str = "pinned-archive") -> None:
+        headers = self.call / "include" / "ito"
+        headers.mkdir(parents=True, exist_ok=True)
+        for name in ("call.h", "content.h", "message.h"):
+            (headers / name).write_bytes(b"synthetic public header: " + name.encode("ascii"))
         self.call_provenance.write_text(json.dumps({
             "schema": 1, "ndk": "28.2.13676358", "openssl_archive_sha256": archive,
             "head": "fixture-core-head", "unverified_test_source": False,
             "core_sources_sha256": "fixture-core-sources",
+            "headers_sha256": {name: digest((headers / name).read_bytes())
+                               for name in ("call.h", "content.h", "message.h")},
             "libraries": {"x86_64": digest(b"call core binary")},
         }))
 
     def run_generator(self) -> dict:
         return generate(self.root, self.yume, self.catalog, self.resolved, self.provenance, self.output,
                         self.call_provenance)
+
+    def test_refuses_missing_message_header_binding(self) -> None:
+        record = json.loads(self.call_provenance.read_text())
+        del record["headers_sha256"]["message.h"]
+        self.call_provenance.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "bind every public header"):
+            self.run_generator()
+
+    def test_refuses_a_changed_public_message_header(self) -> None:
+        (self.call / "include/ito/message.h").write_bytes(b"different interface")
+        with self.assertRaisesRegex(ValueError, "header differs from provenance"):
+            self.run_generator()
 
     def add_provider(self, *, altered_entry: bool = False, wrong_binding: bool = False, version: str = PINNED) -> None:
         entry = {"mode": 0o644, "sha256": digest(b"provider source"), "size": 15}

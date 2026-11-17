@@ -63,24 +63,32 @@ object CallOutcomes {
         else -> CallOutcome.Failed
     }
 
-    private fun ended(view: CallView) = when (view.result) {
-        OK, CallNative.CANCELED -> CallOutcome.YouEnded
-        DECLINED -> CallOutcome.YouDeclined
-        // Remote END reasons are statements by the peer. Only one that
-        // arrived after its proof is the contact's (CALL_SECURITY).
-        PEER_ENDED -> when {
-            !view.endAttributed -> CallOutcome.EndedUnattributed
-            view.remoteEnd == END_DECLINED -> CallOutcome.DeclinedByContact
-            else -> CallOutcome.EndedByContact
+    private fun ended(view: CallView): CallOutcome {
+        when (view.ringEnd) {
+            1 -> return CallOutcome.EndedByContact
+            2 -> return CallOutcome.DeclinedByContact
+            3 -> return CallOutcome.Busy
+            4 -> return CallOutcome.TimedOut
         }
-        TIMEOUT, EXPIRED -> CallOutcome.TimedOut
-        AUTHENTICATION_FAILED, UNTRUSTED -> CallOutcome.AuthenticationFailed
-        MALFORMED, UNSUPPORTED, ALREADY_SPENT -> CallOutcome.InvitationRefused
-        CallNative.CLOCK_REGRESSED -> CallOutcome.ClockRegressed
-        RELAY_REFUSED, TRANSPORT_FAILED -> CallOutcome.ConnectionLost
-        AUTHORITY_MISMATCH, AUTHORITY_ENDED -> CallOutcome.ConnectionEnded
-        STORAGE_FAILED, CallNative.STORAGE_AMBIGUOUS -> CallOutcome.StorageFailed
-        CAPACITY, BUSY -> CallOutcome.Busy
-        else -> CallOutcome.Failed
+        return when (view.result) {
+            OK, CallNative.CANCELED -> CallOutcome.YouEnded
+            DECLINED -> CallOutcome.YouDeclined
+            // Remote END reasons are statements by the peer. Only one that
+            // arrived after its proof is the contact's (CALL_SECURITY).
+            PEER_ENDED -> when {
+                !view.endAttributed -> CallOutcome.EndedUnattributed
+                view.remoteEnd == END_DECLINED -> CallOutcome.DeclinedByContact
+                else -> CallOutcome.EndedByContact
+            }
+            TIMEOUT, EXPIRED -> CallOutcome.TimedOut
+            AUTHENTICATION_FAILED, UNTRUSTED -> CallOutcome.AuthenticationFailed
+            MALFORMED, UNSUPPORTED, ALREADY_SPENT -> CallOutcome.InvitationRefused
+            CallNative.CLOCK_REGRESSED -> CallOutcome.ClockRegressed
+            RELAY_REFUSED, TRANSPORT_FAILED -> CallOutcome.ConnectionLost
+            AUTHORITY_MISMATCH, AUTHORITY_ENDED -> CallOutcome.ConnectionEnded
+            STORAGE_FAILED, CallNative.STORAGE_AMBIGUOUS -> CallOutcome.StorageFailed
+            CAPACITY, BUSY -> CallOutcome.Busy
+            else -> CallOutcome.Failed
+        }
     }
 }

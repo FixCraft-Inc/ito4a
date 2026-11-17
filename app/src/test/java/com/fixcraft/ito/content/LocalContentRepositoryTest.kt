@@ -92,6 +92,18 @@ class LocalContentRepositoryTest {
         assertTrue(store.history().isEmpty())
     }
 
+    @Test fun migrationReadsRetainedRecordsBeforeLegacyExpiry() {
+        store.recordMessage(id, peer, false, "retained".toByteArray(), now)
+        store.recordCall(peer, true, 0, now, 10)
+        now += ContentCodec.RETENTION_SECONDS + 1
+        val before = File(root, "snapshot.bin").readBytes()
+        store.migrationSnapshot().use {
+            assertEquals(1, it.messages.size)
+            assertEquals(1, it.calls.size)
+        }
+        assertArrayEquals(before, File(root, "snapshot.bin").readBytes())
+    }
+
     @Test fun deletionPreservesUnrelatedPeerAndDirection() {
         val other = ByteArray(32) { 99 }
         store.recordMessage(id, peer, false, "received".toByteArray(), now)

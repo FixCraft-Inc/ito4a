@@ -40,7 +40,7 @@ class PreferencesCodecTest {
 
     @Test fun rejectsWrongTypesUnknownFieldsAndUnknownSchemas() {
         for (mutation in listOf<(JSONObject) -> Unit>(
-            { it.put("schema", "2") }, { it.put("schema", 3) }, { it.put("routing", true) },
+            { it.put("schema", "2") }, { it.put("schema", 4) }, { it.put("routing", true) },
             { it.put("enable_plaintext", true) }, { it.remove("audio") }, { it.remove("presentation") },
             { it.put("presentation", "Expert") }, { it.put("schema", 1) },
         )) {
@@ -63,6 +63,8 @@ class PreferencesCodecTest {
     @Test fun schemaOneReadsAsSimpleAndAdvancedChangesNoPolicy() {
         val schemaOne = JSONObject(PreferencesCodec.encode(Preferences(services = listOf(service())))).put("schema", 1)
         schemaOne.remove("presentation")
+        schemaOne.remove("backgroundMessages")
+        schemaOne.remove("notificationText")
         val upgraded = PreferencesCodec.decode(schemaOne.toString())
         assertEquals(Presentation.Simple, upgraded.presentation)
         assertEquals(listOf(service()), upgraded.services)
@@ -70,7 +72,21 @@ class PreferencesCodecTest {
         assertEquals(Presentation.Advanced, advanced.presentation)
         assertEquals(RoutingPreference.ProtectedOnly, advanced.routing)
         assertEquals(upgraded.audio, advanced.audio)
-        assertEquals(2, JSONObject(PreferencesCodec.encode(advanced)).getInt("schema"))
+        assertEquals(3, JSONObject(PreferencesCodec.encode(advanced)).getInt("schema"))
+    }
+
+    @Test fun backgroundIsExplicitAndOldSchemasKeepItOff() {
+        assertEquals(false, PreferencesCodec.decode(null).backgroundMessages)
+        val enabled = Preferences(backgroundMessages = true, notificationText = false)
+        assertEquals(enabled, PreferencesCodec.decode(PreferencesCodec.encode(enabled)))
+        val old = JSONObject(PreferencesCodec.encode(enabled)).put("schema", 2)
+        old.remove("backgroundMessages"); old.remove("notificationText")
+        assertEquals(false, PreferencesCodec.decode(old.toString()).backgroundMessages)
+        assertEquals(true, PreferencesCodec.decode(old.toString()).notificationText)
+        for (name in listOf("backgroundMessages", "notificationText")) {
+            val wrong = JSONObject(PreferencesCodec.encode(enabled)).put(name, "true")
+            assertThrows(InvalidPreferences::class.java) { PreferencesCodec.decode(wrong.toString()) }
+        }
     }
 
     @Test fun removingAServicePreservesPrivacyAndAudioPreferences() {

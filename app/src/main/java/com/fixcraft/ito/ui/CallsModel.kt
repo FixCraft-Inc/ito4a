@@ -24,14 +24,30 @@ class CallsModel(application: Application) : AndroidViewModel(application) {
     val book = app.callBook.state
     val view = app.calls.view
     val connection = app.connections.state
+    val messenger get() = app.messenger
+    val incoming get() = app.ringing.incoming
+    val history get() = app.chatHistory
     private val mutableNotice = MutableStateFlow<Int?>(null)
     val notice = mutableNotice.asStateFlow()
 
     init { open() }
 
-    fun open() { viewModelScope.launch(Dispatchers.IO) { app.callBook.open() } }
+    fun open() { viewModelScope.launch(Dispatchers.IO) {
+        try { app.messenger.initialize() }
+        catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (_: Exception) { mutableNotice.value = R.string.contact_change_failed }
+    } }
 
     fun dismissNotice() { mutableNotice.value = null }
+    fun message(onSuccess: () -> Unit = {}, onFinished: () -> Unit = {}, action: com.fixcraft.ito.messaging.Messenger.() -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try { app.messenger.action(); withContext(Dispatchers.Main) { onSuccess() } }
+            catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+            catch (_: Exception) { /* Messenger publishes a typed, content-free refusal. */ }
+            finally { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { onFinished() } }
+        }
+    }
+    fun rename(key: ByteArray, name: String) { viewModelScope.launch { change { rename(key, name) } } }
 
     /** A scanned text that looked like an invitation but is not one. */
     fun refuseInvitation() { mutableNotice.value = R.string.refusal_invitation_text }
@@ -50,10 +66,9 @@ class CallsModel(application: Application) : AndroidViewModel(application) {
 
     fun block(key: ByteArray) { viewModelScope.launch { change { block(key) } } }
 
-    fun call(key: ByteArray) = app.calls.call(key)
-
-    /** Takes the invitation, which holds the PSK. The controller wipes it. */
-    fun answer(invitation: ByteArray) = app.calls.answer(invitation)
+    fun call(key: ByteArray) = app.ringing.call(key)
+    fun acceptRing(token: String) = app.ringing.accept(token)
+    fun declineRing(token: String) = app.ringing.decline(token)
 
     fun decide(accept: Boolean) = app.calls.decide(accept)
     fun hangup() = app.calls.hangup()
@@ -69,7 +84,7 @@ class CallsModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun <T> change(action: com.fixcraft.ito.call.CallBook.() -> T): T? = withContext(Dispatchers.IO) {
         try {
-            app.callBook.action()
+            app.callBook.action().also { app.messenger.initialize() }
         } catch (refusal: BookException) {
             mutableNotice.value = refusalText(refusal.refusal)
             null

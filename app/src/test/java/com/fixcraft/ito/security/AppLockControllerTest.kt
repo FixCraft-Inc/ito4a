@@ -52,6 +52,17 @@ class AppLockControllerTest {
         try { block(); fail("Unavailable authentication was accepted") } catch (_: LockUnavailableException) {}
     }
 
+    @Test fun retainedChatDirectoryRefusesReplacementContentKeyWithoutAWrapper() {
+        val chats = File(parent, "ito-chats").apply { mkdir() }
+        assertFalse(hasRetainedContent(parent))
+        File(chats, "retained.history").writeBytes(byteArrayOf(1))
+        val owner = AppLockController(root, keys, { hasRetainedContent(parent) }, {})
+        assertEquals(LockState.Unavailable, owner.state.value)
+        locked { key(owner) }
+        assertFalse(File(root, "access.bin").exists())
+        assertFalse(keys.hasExistingKey())
+    }
+
     @Test fun enableLocksOnBackgroundAndRequiresNewCryptographicCompletion() {
         val owner = owner()
         val original = key(owner)

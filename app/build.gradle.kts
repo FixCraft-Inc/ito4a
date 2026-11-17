@@ -48,13 +48,15 @@ android {
         buildConfigField("String", "SUGGESTED_PROVIDER", "\"$suggestedProvider\"")
         buildConfigField("String", "SUGGESTED_ISSUER", "\"$suggestedIssuer\"")
         manifestPlaceholders["providerCallbackEnabled"] = (callbackUri != null).toString()
+        manifestPlaceholders["providerCallbackAction"] = if (callbackUri != null) "android.intent.action.VIEW"
+            else "${applicationId}.provider.UNREGISTERED"
         manifestPlaceholders["providerCallbackHost"] = callbackUri?.host ?: "unregistered.invalid"
         minSdk = 28
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        testInstrumentationRunnerArguments["notAnnotation"] = "com.fixcraft.ito.transport.RequiresI1Fixture,com.fixcraft.ito.call.RequiresI4bFixture"
+        testInstrumentationRunnerArguments["notAnnotation"] = "com.fixcraft.ito.transport.RequiresI1Fixture,com.fixcraft.ito.call.RequiresI4bFixture,com.fixcraft.ito.messaging.RequiresMessengerFixture"
         ndk { abiFilters += (providers.gradleProperty("itoAbi").orNull ?: "arm64-v8a,x86_64").split(',') }
         externalNativeBuild {
             ndkBuild {

@@ -90,7 +90,10 @@ invalidates the captured run permit. Without trusted time only its monotonic
 deadline applies, as yume4a's `docs/PROVIDER_CLIENT.md` "Trusted time" states.
 Ito stops the native run, joins every JNI borrower, destroys its handle, then
 closes the credential session and permit.
-A new connection requires an explicit action and a valid exact lease.
+Foreground automatic connection and bounded transient retries reacquire the
+same explicit selection and a valid exact lease. Disconnect pauses them for
+the process. Authentication or authority failure does not retry enrollment.
+The network and retry rules are owned by [native integration](NATIVE.md).
 
 A lease lasts as long as the provider grants, which can be as short as an
 hour. Ito renews it on its own, so the card does not show its times. Choosing a
@@ -143,7 +146,8 @@ reviewed source content. The build requires the library version that
 explicit registration, provide both `-PitoProviderClientId=...` and
 `-PitoProviderCallback=https://HOST/ito/oauth/callback`. The callback host must
 publish the actual APK package/signer association. Partial or malformed
-registrations fail the build. Defaults contain no registration.
+registrations fail the build. Defaults contain no registration, and keep the
+callback activity disabled and unexported.
 A distribution may also suggest one provider with
 `-PitoSuggestedProvider=https://ORIGIN` and, for browser sign-in,
 `-PitoSuggestedIssuer=https://ISSUER`. Both must be canonical HTTPS origins,

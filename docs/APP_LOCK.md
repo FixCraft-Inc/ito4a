@@ -50,15 +50,35 @@ authentication-bound keys. The local-content key has the stronger wrapper
 property described above. A modified or compromised running process is outside
 this application access boundary.
 
+Background messaging and ringing retain the same access boundary. The
+[messaging lifecycle](MESSAGING_LIFECYCLE.md) owns sealed buffering,
+notification redaction and acceptance after unlock. A relay's class-2 hint
+cannot authenticate a new caller while the ratchet keys are unavailable.
+
 ## Lifecycle
 
 Enabled lock states are Locked and Unlocked. Every new process starts Locked.
+
+The dedicated incoming-call activity may appear over Android's device lock
+screen. It never unlocks Ito or changes key-access state. With Ito locked it
+offers only unlock or decline. Opening the full app first dismisses the device
+keyguard, then uses Ito's existing authenticated unlock flow.
 Backgrounding or explicit Lock clears the cached local-content key, invalidates
 pending challenges and denies new identity, content, import and provider
 operations. Rotation alone does not count as backgrounding. Unlock is never
 saved in an Activity bundle, preferences or a bearer token. Returning from a
 canceled prompt remains locked. A late callback from an invalidated prompt
 cannot grant access.
+
+When ordinary connections stop on backgrounding, the connection owner joins
+the mailbox worker, closes native sessions and clears transient pairing display
+state. Cleanup survives Activity destruction. An active foreground audio call
+retains its connection and mailbox worker. Enabled app lock refuses new
+message access until unlock, while Disabled permits the retained run to process
+messages. The opt-in messaging service can retain this connection independently
+of audio. Newly arrived sealed items wait for unlock, and notifications hide
+names and text. Returning to foreground with Disabled or Unlocked access permits the selected connection
+again, unless Disconnect paused it.
 
 A validated provider browser callback may wait in its existing process-owned
 operation for Disabled or Unlocked, then recheck `requireAccess()`. Waiting
@@ -90,7 +110,7 @@ until normal call teardown, rather than being destroyed underneath the call.
 
 Malformed wrappers, absent or invalidated Keystore keys, unsupported
 authentication and I/O errors refuse access. A missing wrapper alongside
-retained content or an existing wrapping-key alias refuses new key creation.
+retained legacy content, a retained chat record or an existing wrapping-key alias refuses new key creation.
 This also prevents a lost wrapper from silently disabling an enabled lock
 before any message was stored. Existing ciphertext is preserved.
 There is no automatic reset, replacement identity or silent disabling path.
