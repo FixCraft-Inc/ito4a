@@ -7,23 +7,38 @@ This bitrate excludes application/TLS/YUME/TCP headers, handshakes, feedback and
 link overhead. Devices without the required codec or microphone fail the audio
 attempt. There is no PCM transmission or cryptographic fallback.
 
-The user first establishes the authenticated call and accepts the contact.
-Start audio requests microphone permission, starts a nonsticky microphone
-foreground service and negotiates [content envelope 1](https://github.com/FixCraft-Inc/ito/blob/main/docs/CONTENT_CHANNEL.md).
-Capture begins only when both HELLOs agree. Permission refusal starts no audio.
-Capture/playback setup, route or focus failure cancels the call. Incoming HELLO
-alone never starts microphone capture. Microphone mute replaces captured PCM
-with silence before encoding. The UI provides default-route/speaker selection
-and hangup. The private foreground notification exposes only a generic call
-label and an End action, without contact names or content.
+Calling and answering start audio. Call and Answer first ask Android for the
+microphone. A refusal starts nothing, and an unanswered incoming call keeps
+ringing until its own deadline. An attempt that starts while Ito is on screen
+starts a nonsticky microphone foreground service with it, so the call keeps its
+connection and microphone access when the person leaves the app. The service
+requests [content envelope 1](https://github.com/FixCraft-Inc/ito/blob/main/docs/CONTENT_CHANNEL.md)
+for that attempt while app access is available. Negotiation begins only after
+both proofs and media authorization, and capture begins only when both HELLOs
+agree. A peer that does not answer HELLO within five seconds ends the call. The
+Linux `ito-call` test endpoint exchanges raw DATA and never answers, so its
+calls with the app end there. Capture/playback setup or focus failure cancels
+the call. Incoming HELLO alone never starts microphone capture. Microphone mute
+replaces captured PCM with silence before encoding. If Android revokes the
+permission during a call, the call screen asks for it again. The private
+foreground notification exposes only a generic call label and an End action,
+without contact names or content.
 
 The adapter requests transient voice-communication audio focus and uses
 `MODE_IN_COMMUNICATION`. Losing focus, including a transient interruption,
-ends the attempt rather than silently resuming capture. It uses Android's
-communication-device route on API 31+, and speakerphone selection on older
-versions. Android remains responsible for wired/Bluetooth device behavior.
-The adapter restores the prior mode/speaker setting and relinquishes its
-communication-device override and focus on shutdown.
+ends the attempt rather than silently resuming capture.
+
+The call screen lists only the devices Android reports for the call: the
+phone's earpiece and speaker, wired and USB headsets, Bluetooth and hearing
+aids. A headset carries both playback and its microphone. With two choices the
+audio button switches between them, and with more it opens the list. The list
+follows devices as they connect and disconnect. On API 31+ the adapter selects
+Android's communication device. Before that, a plugged-in headset replaces the
+earpiece, the speaker uses speakerphone, and Bluetooth uses an SCO link started
+only when chosen. A device Android refuses leaves the route unchanged and the
+call running. On shutdown the adapter restores the prior mode and speaker
+setting, stops its SCO link and releases its communication-device override and
+focus.
 
 One capture worker owns the encoder and one playout worker owns the decoder.
 Each sends only fresh audio. Backpressure drops the current frame rather than
@@ -46,9 +61,11 @@ authentication remain unchanged. Economy/Emergency remain stored preferences
 that Settings does not offer, pending the separate I6 adaptation and
 total-wire/intelligibility tests. Settings states the fixed audio quality.
 
-An active foreground audio call may continue when the Activity leaves the
-screen. Without the opt-in messaging service, an ordinary data/test call stops
-on backgrounding. App lock
+A call keeps running when the Activity leaves the screen, from its first
+phase, because its foreground service starts with it. The call screen can also
+be minimized inside Ito, leaving chats usable with a bar that returns to the
+call. Without that service or the opt-in messaging service, an ordinary
+data/test call stops on backgrounding. App lock
 locks local access on backgrounding while an already authorized media session
 retains only its existing native/device borrowers. Ending that foreground call
 while the Activity is hidden also stops its retained transport connection
@@ -60,8 +77,8 @@ The service is nonsticky: process death stops audio and does not reconnect or
 restart recording. Rotation preserves the process call owner.
 
 The [messaging lifecycle](MESSAGING_LIFECYCLE.md) owns incoming ringing and
-opt-in background reachability. Answering and starting audio require foreground
-user interaction. There is no push registration or automatic call restart.
+opt-in background reachability. Answering, and so starting audio, requires
+foreground user interaction. There is no push registration or automatic call restart.
 Device tests must separately establish sleeping-phone reachability,
 intelligibility, end-to-end delay, focus/routing, handover, battery and cleanup.
 Codec execution, debug APK packaging and emulator callbacks do not qualify

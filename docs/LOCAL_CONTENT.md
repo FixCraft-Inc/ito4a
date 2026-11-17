@@ -66,7 +66,8 @@ native outbox until a delivery receipt arrives.
 ## Encryption and publication
 
 Files live in `noBackupFilesDir/ito-chats/`: `<peer-key>.history`,
-`<peer-key>.session`, `settings.bin` and `retired.bin`. The key in a filename
+`<peer-key>.session`, `<peer-key>.photo`, `own.photo`, `settings.bin` and
+`retired.bin`. The key in a filename
 is the exact 32-byte peer communication key in lowercase hexadecimal.
 Settings hold the offered pairing name and mutual read-receipt preference.
 A session is at most 717,492 bytes and includes outbox plaintext. It receives
@@ -79,7 +80,9 @@ use header `ITOH` followed by byte 1, and authenticated domains
 `ito/chat-storage/history/1/<peer-key>` and
 `ito/chat-storage/session/1/<peer-key>`. Settings use `ITOS` plus byte 1 and
 `ito/chat-storage/settings/1`. Retired inboxes use `ITOR` plus byte 1 and
-`ito/chat-storage/retired-inboxes/1`. The independent closed binary formats
+`ito/chat-storage/retired-inboxes/1`. Photos use `ITOP` plus byte 1 and
+`ito/chat-storage/photo/1/<peer-key>`, or `ito/chat-storage/photo/1/own` for
+the owner's. The independent closed binary formats
 reject unknown versions, invalid fields, duplicates and trailing bytes.
 
 Every replacement authenticates existing ciphertext, writes a named private
@@ -96,6 +99,16 @@ Owned plaintext arrays are cleared after use. Callers close owned read records.
 JVM/provider copies, decoded display strings and flash blocks are outside this
 best-effort clearing claim. Suspend closes message sessions. Display summaries are read on demand
 and leave composition when the app locks. Files and key wrappers are excluded from backup and transfer.
+
+## Photos
+
+A person can set a photo for each contact and for themselves. Photos are
+labels on this phone, like names. Nothing sends them to a contact or a relay.
+A picked image is decoded at reduced size, cropped to a centred square of at
+most 320 pixels and stored as a new JPEG of at most 128 KiB, so camera
+metadata such as location is not kept. Removing a contact deletes its photo.
+Deleting history keeps photos. An unreadable photo shows initials and is not
+replaced.
 
 ## Migration and deletion
 

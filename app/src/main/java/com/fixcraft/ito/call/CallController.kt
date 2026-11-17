@@ -21,7 +21,12 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.nio.ByteBuffer
 
-enum class CallPhase { Idle, Connecting, Inviting, Waiting, Handshaking, Authenticating, Consent, Media, Ending, Ended }
+enum class CallPhase {
+    Idle, Connecting, Inviting, Waiting, Handshaking, Authenticating, Consent, Media, Ending, Ended;
+
+    /** An attempt that has started and not begun to close. */
+    val active: Boolean get() = this != Idle && this != Ending && this != Ended
+}
 
 /** Why an attempt could not start. Ended attempts report the core's status instead. */
 enum class CallStartFailure { NoIdentity, NotConnected, Transport, Refused }
@@ -52,7 +57,10 @@ data class CallView(
     val contentReady: Boolean = false,
     val voiceActive: Boolean = false,
     val muted: Boolean = false,
-    val speaker: Boolean = false,
+    val audioRoutes: List<AudioRoute> = emptyList(),
+    val audioRoute: AudioRoute? = null,
+    /** elapsedRealtime when media was first authorized, for the call timer. Zero before. */
+    val connectedAt: Long = 0,
     val durationMs: Long = 0,
     val historySaved: Boolean = false,
     val localFailure: CallLocalFailure? = null,
@@ -113,10 +121,16 @@ class CallController(
     private var contentStartedAt = 0L
     private val audioReceiver = AtomicReference<((Long, ByteArray) -> Unit)?>(null)
 
+    /**
+     * Asks for content as soon as this attempt reaches media authorization.
+     * Call or Answer requests it, so audio starts without a second action.
+     * Negotiation itself still waits for both proofs and MediaAuthorized.
+     */
     fun beginContent() {
         requireAccess()
         check(profile == 2 || profile == 3)
-        check(view.value.phase == CallPhase.Media && view.value.peerAuthenticated)
+        val current = view.value
+        check(current.phase.active && (current.phase != CallPhase.Media || current.peerAuthenticated))
         synchronized(contentLock) { contentRequested = true }
     }
 
@@ -127,8 +141,8 @@ class CallController(
         cancel()
     }
 
-    fun audioState(active: Boolean, muted: Boolean = false, speaker: Boolean = false) = view {
-        it.copy(voiceActive = active, muted = muted, speaker = speaker)
+    fun audioState(active: Boolean, muted: Boolean = false, routes: List<AudioRoute> = emptyList(), route: AudioRoute? = null) = view {
+        it.copy(voiceActive = active, muted = muted, audioRoutes = routes, audioRoute = route)
     }
 
     fun sendOpus(sample: Long, packet: ByteArray): Boolean = synchronized(contentLock) {
@@ -489,8 +503,11 @@ class CallController(
             invitation = null
         }
         val closed = status.state == CallNative.STATE_CLOSED
+        val phase = phaseOf(status, current.initiator)
         current.copy(
-            phase = phaseOf(status, current.initiator),
+            phase = phase,
+            connectedAt = if (current.connectedAt == 0L && phase == CallPhase.Media) android.os.SystemClock.elapsedRealtime()
+                else current.connectedAt,
             peer = status.peerKey,
             invitation = invitation,
             result = if (closed && result != 0) result else status.result,

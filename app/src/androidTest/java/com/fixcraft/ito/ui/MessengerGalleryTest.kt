@@ -39,30 +39,40 @@ class MessengerGalleryTest {
                 ChatBubble(ByteArray(16) { 1 }, false, 1, "Are we still meeting at six?", now, now, 3, false, 0),
                 ChatBubble(ByteArray(16) { 2 }, true, 1, "Yes. I will call when I arrive.", now + 1000, now + 1000, 2, false, 0),
                 ChatBubble(ByteArray(16) { 3 }, false, 1, "This message waited while the phone was offline.", now - 5000, now + 3000, 3, true, 0)
-            ), listOf(ChatCall(now + 2000, 64_000L, 0)), 0, ChatSettings("Mina", true), true, now / 1000, 1)
+            ), listOf(ChatCall(now + 2000, 64_000L, 0, true), ChatCall(now + 4000, 0L, -1104, false)), 0,
+            ChatSettings("Mina", true), true, now / 1000, 1)
+        val chrome = ScreenChrome(SnackbarHostState()) {}
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(dark) then DeviceConfigurationOverride.FontScale(scale)) {
-                ItoTheme { Surface(color = MaterialTheme.colorScheme.background) {
-                    ItoFrame("Ito", null, Page.Calls, SnackbarHostState(), {}) { key(screen, dark, scale) { screen() } }
-                } }
+                // Full-screen pages draw their own bars, as they do in the app.
+                ItoTheme { Surface(color = MaterialTheme.colorScheme.background) { key(screen, dark, scale) { screen() } } }
             }
         }
         val capture = GalleryCapture(compose)
         for (night in listOf(false, true)) for (font in listOf(1f, 2f)) {
             dark = night; scale = font
             val profile = "${if (night) "dark" else "light"}-${if (font == 1f) "normal" else "large"}"
-            screen = { IncomingCallContent(unverified.copy(trust = CallNative.TRUST_VERIFIED), {}, {}) }
+            screen = { IncomingCallContent(unverified.copy(trust = CallNative.TRUST_VERIFIED), null, {}, {}) }
             capture.frame("$profile-incoming")
+            screen = { IncomingCallContent(verified, null, {}, {}, microphoneRefused = true) }
+            capture.frame("$profile-incoming-microphone-refused")
             screen = { LockedScreen(true, true, false, {}, {}, {}, incomingCall = true) }
             capture.frame("$profile-incoming-locked")
-            screen = { ChatTimeline(model, verified, data, {}) }
+            screen = { ChatScreenContent(model, verified, data, chrome) {} }
             capture.frame("$profile-chat", scroll = false)
-            screen = { ContactProfile(model, verified, data, true, {}) }
+            screen = { ContactProfileContent(model, verified, data, true, {}) }
             capture.frame("$profile-profile")
-            screen = { ChatTimeline(model, unverified, data, {}) }
+            screen = { ChatScreenContent(model, unverified, data, chrome) {} }
             capture.frame("$profile-unverified", scroll = false)
-            screen = { ContactProfile(model, unverified, data, false, {}) }
+            screen = { ContactProfileContent(model, unverified, data, false, {}) }
             capture.frame("$profile-unverified-profile")
+            screen = { AddContactScreen(model, chrome) {} }
+            // The pairing screen is a secure window, so its frame comes from Compose.
+            capture.secureFrame("$profile-add-contact")
+            screen = { ItoFrame("Settings", null, Page.Settings, SnackbarHostState(), {}) {
+                SettingsPage(com.fixcraft.ito.domain.Preferences(), profile = { OwnProfileRow(model) {} })
+            } }
+            capture.frame("$profile-settings")
         }
     }
 }

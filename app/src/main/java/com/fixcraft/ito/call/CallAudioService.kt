@@ -22,8 +22,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-/** User-started, nonsticky foreground audio for one already consented call.
- * It neither rings a sleeping phone nor starts new calls in the background.
+/**
+ * The nonsticky foreground owner of one call the person started or answered.
+ * It starts with the attempt, while Ito is on screen, so the call keeps its
+ * connection and microphone access when the person leaves the app. The
+ * microphone opens only after both proofs, media authorization and agreed
+ * content. It neither rings a sleeping phone nor starts calls by itself.
  */
 class CallAudioService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -33,7 +37,6 @@ class CallAudioService : Service() {
     private var monitor: Job? = null
     private var started = false
     private var muted = false
-    private var speaker = false
     private var closing = false
     private var destroyed = false
     private var audioClosed = false
@@ -41,51 +44,56 @@ class CallAudioService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (closing || destroyed || (!started && app.callForeground) || intent == null || app.calls.view.value.phase != CallPhase.Media) {
-            stopSelf(); return START_NOT_STICKY
-        }
-        when (intent.action) {
-            END -> { app.calls.hangup(); if (!started) stopSelf(); return START_NOT_STICKY }
-            MUTE -> {
-                if (!started) stopSelf()
-                else if (voice != null) { muted = !muted; voice?.mute(muted); publish() }
-                return START_NOT_STICKY
+        when (intent?.action) {
+            START -> begin()
+            END -> {
+                // A connected call hangs up so the contact sees who ended it. Earlier phases cancel.
+                val phase = app.calls.view.value.phase
+                if (phase == CallPhase.Media) app.calls.hangup() else if (phase.active) app.calls.cancel()
+                stopIfIdle()
             }
-            SPEAKER -> {
-                if (!started) { stopSelf(); return START_NOT_STICKY }
-                if (voice == null) return START_NOT_STICKY
-                try { voice?.speaker(!speaker); speaker = !speaker; publish() }
-                catch (_: Exception) { app.calls.audioFailed() }
-                return START_NOT_STICKY
-            }
+            MUTE -> if (voice != null) { muted = !muted; voice?.mute(muted); publish() } else stopIfIdle()
+            ROUTE -> if (started) { voice?.selectRoute(intent.getIntExtra(ROUTE_ID, -1)); publish() } else stopIfIdle()
+            else -> stopIfIdle()
         }
-        if (started) return START_NOT_STICKY
+        return START_NOT_STICKY
+    }
+
+    private fun stopIfIdle() { if (!started) stopSelf() }
+
+    /**
+     * Answers [start]'s foreground request. Android requires startForeground
+     * even when the call ended before this ran, so the service enters the
+     * foreground first and leaves at once when there is no call to own.
+     */
+    private fun begin() {
+        try {
+            if (Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            else startForeground(NOTIFICATION, notification())
+        } catch (_: Exception) {
+            if (!started) { app.calls.audioFailed(); stopSelf() }
+            return
+        }
+        // A repeated request reaches the running owner, which already holds its call.
+        if (started) return
+        // An earlier call's devices may still be closing. That owner keeps the guard.
+        if (closing || destroyed || app.callForeground || !app.calls.view.value.phase.active) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         try {
             app.appLock.requireAccess()
-            val notifications = getSystemService(NotificationManager::class.java)
-            notifications.createNotificationChannel(NotificationChannel(CHANNEL,
-                getString(R.string.audio_notification_channel), NotificationManager.IMPORTANCE_LOW))
-            val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-            val end = PendingIntent.getService(this, 1, Intent(this, CallAudioService::class.java).setAction(END), PendingIntent.FLAG_IMMUTABLE)
-            val notification = Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_call)
-                .setContentTitle(getString(R.string.audio_notification_title))
-                .setContentText(getString(R.string.audio_notification_description))
-                .setContentIntent(open).setOngoing(true).setCategory(Notification.CATEGORY_CALL)
-                .setVisibility(Notification.VISIBILITY_PRIVATE)
-                .addAction(Notification.Action.Builder(null, getString(R.string.end_call), end).build()).build()
-            if (Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-            else startForeground(NOTIFICATION, notification)
             app.callForeground = true
             started = true
             app.calls.beginContent()
             monitor = scope.launch(start = CoroutineStart.LAZY) {
                 app.calls.view.collect { state ->
-                    if (state.phase != CallPhase.Media || !state.peerAuthenticated) {
-                        finishAudio()
-                    } else if (state.contentReady && audioOwner == null) {
+                    if (!state.phase.active) finishAudio()
+                    else if (state.phase == CallPhase.Media && state.peerAuthenticated && state.contentReady && audioOwner == null) {
                         val owner = AudioDeviceOwner(
                             Dispatchers.Main.immediate, Dispatchers.IO,
-                            create = { OpusVoice(this@CallAudioService, app.calls::sendOpus, app.calls::audioFailed) },
+                            create = { OpusVoice(this@CallAudioService, app.calls::sendOpus, app.calls::audioFailed, ::publish) },
                             startDevice = OpusVoice::start,
                             ready = { device ->
                                 if (app.calls.view.value.phase != CallPhase.Media) finishAudio()
@@ -105,10 +113,27 @@ class CallAudioService : Service() {
             }
             monitor?.start()
         } catch (_: Exception) { app.calls.audioFailed(); finishAudio() }
-        return START_NOT_STICKY
     }
 
-    private fun publish() { app.calls.audioState(voice != null, muted, speaker) }
+    /** A private, generic notice: no contact name, only a way back and End call. */
+    private fun notification(): Notification {
+        val notifications = getSystemService(NotificationManager::class.java)
+        notifications.createNotificationChannel(NotificationChannel(CHANNEL,
+            getString(R.string.audio_notification_channel), NotificationManager.IMPORTANCE_LOW))
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val end = PendingIntent.getService(this, 1, Intent(this, CallAudioService::class.java).setAction(END), PendingIntent.FLAG_IMMUTABLE)
+        return Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_call)
+            .setContentTitle(getString(R.string.audio_notification_title))
+            .setContentText(getString(R.string.audio_notification_description))
+            .setContentIntent(open).setOngoing(true).setCategory(Notification.CATEGORY_CALL)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .addAction(Notification.Action.Builder(null, getString(R.string.end_call), end).build()).build()
+    }
+
+    private fun publish() {
+        val device = voice
+        app.calls.audioState(device != null, muted, device?.routes().orEmpty(), device?.currentRoute())
+    }
 
     private fun finishAudio() {
         if (closing) return
@@ -132,7 +157,7 @@ class CallAudioService : Service() {
     override fun onDestroy() {
         scope.cancel()
         if (started) app.calls.attachAudio(null)
-        if (started && app.calls.view.value.phase == CallPhase.Media) app.calls.cancel()
+        if (started && app.calls.view.value.phase.active) app.calls.cancel()
         super.onDestroy()
         destroyed = true
         if (started && !app.appLock.isForeground() && !app.backgroundForeground.value) app.connections.stop(pause = false)
@@ -145,14 +170,19 @@ class CallAudioService : Service() {
     companion object {
         private const val CHANNEL = "ito-active-audio"
         private const val NOTIFICATION = 11
+        private const val START = "com.fixcraft.ito.audio.START"
         const val END = "com.fixcraft.ito.audio.END"
         const val MUTE = "com.fixcraft.ito.audio.MUTE"
-        const val SPEAKER = "com.fixcraft.ito.audio.SPEAKER"
+        const val ROUTE = "com.fixcraft.ito.audio.ROUTE"
+        private const val ROUTE_ID = "route"
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, CallAudioService::class.java))
+            context.startForegroundService(Intent(context, CallAudioService::class.java).setAction(START))
         }
         fun action(context: Context, action: String) {
             context.startService(Intent(context, CallAudioService::class.java).setAction(action))
+        }
+        fun route(context: Context, id: Int) {
+            context.startService(Intent(context, CallAudioService::class.java).setAction(ROUTE).putExtra(ROUTE_ID, id))
         }
     }
 }

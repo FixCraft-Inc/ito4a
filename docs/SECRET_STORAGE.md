@@ -211,7 +211,7 @@ The optional [application lock](APP_LOCK.md) gates new identity-store access
 and native book operations. Its authenticated proof does not replace or
 reconfigure `ito.identity.v1`. Existing authorized call borrowers may finish
 while locked, and no new identity/contact mutation is allowed. Communication
-messages and history use the independent [local-content store](LOCAL_CONTENT.md),
+messages, history and photos use the independent [local-content store](LOCAL_CONTENT.md),
 whose random encryption key is wrapped by the application-access owner.
 
 An invitation never enters this store's plaintext as a persisted secret

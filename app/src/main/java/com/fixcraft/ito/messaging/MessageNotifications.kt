@@ -29,6 +29,7 @@ class MessageNotifications(private val app: ItoApplication) {
     fun channels() {
         manager.createNotificationChannel(NotificationChannel(READY, app.getString(R.string.messaging_channel), NotificationManager.IMPORTANCE_LOW))
         manager.createNotificationChannel(NotificationChannel(MESSAGES, app.getString(R.string.messages_channel), NotificationManager.IMPORTANCE_DEFAULT))
+        manager.createNotificationChannel(NotificationChannel(MISSED, app.getString(R.string.missed_channel), NotificationManager.IMPORTANCE_DEFAULT))
         val calls = NotificationChannel(CALLS, app.getString(R.string.incoming_channel), NotificationManager.IMPORTANCE_HIGH)
         calls.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
             AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
@@ -49,12 +50,14 @@ class MessageNotifications(private val app: ItoApplication) {
         Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
-    private fun base(channel: String, text: Int): Notification.Builder = Notification.Builder(app, channel)
-        .setSmallIcon(R.drawable.ic_ito).setContentTitle(app.getString(R.string.app_name))
-        .setContentText(app.getString(text)).setContentIntent(open())
-        .setVisibility(Notification.VISIBILITY_PRIVATE)
-        .setPublicVersion(Notification.Builder(app, channel).setSmallIcon(R.drawable.ic_ito)
-            .setContentTitle(app.getString(R.string.app_name)).setContentText(app.getString(text)).build())
+    /** Each kind has its own icon and public title, so the shade never shows two notices that look alike. */
+    private fun base(channel: String, text: Int, icon: Int = R.drawable.ic_ito, title: Int = R.string.app_name): Notification.Builder =
+        Notification.Builder(app, channel)
+            .setSmallIcon(icon).setContentTitle(app.getString(title))
+            .setContentText(app.getString(text)).setContentIntent(open())
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(Notification.Builder(app, channel).setSmallIcon(icon)
+                .setContentTitle(app.getString(title)).setContentText(app.getString(text)).build())
 
     fun ready(): Notification {
         val text = when {
@@ -64,7 +67,8 @@ class MessageNotifications(private val app: ItoApplication) {
         }
         val stop = PendingIntent.getService(app, 21, Intent(app, MessagingService::class.java).setAction(MessagingService.DISCONNECT),
             PendingIntent.FLAG_IMMUTABLE)
-        return base(READY, text).setOngoing(true).setOnlyAlertOnce(true)
+        return base(READY, text, R.drawable.ic_hub, R.string.messaging_service_title).setOngoing(true).setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .addAction(Notification.Action.Builder(null, app.getString(R.string.stop_transport), stop).build()).build()
     }
 
@@ -86,13 +90,26 @@ class MessageNotifications(private val app: ItoApplication) {
 
     @Synchronized fun redact() {
         manager.cancel(MESSAGE_NOTIFICATION)
+        manager.cancel(MISSED_NOTIFICATION)
         incoming(app.ringing.incoming.value)
+    }
+
+    /** A call that rang here and ended unanswered. In-app, the chat's history shows it instead. */
+    @Synchronized fun missed(peer: ByteArray) {
+        if (app.appLock.isForeground() || !allowed()) return
+        val builder = base(MISSED, R.string.ring_missed, R.drawable.ic_call_missed).setAutoCancel(true)
+        if (Build.VERSION.SDK_INT >= 31) builder.setCategory(Notification.CATEGORY_MISSED_CALL)
+        if (access) {
+            val name = (app.callBook.state.value as? BookState.Ready)?.contacts?.firstOrNull { it.key.contentEquals(peer) }?.name
+            if (name != null) builder.setContentTitle(name)
+        }
+        manager.notify(MISSED_NOTIFICATION, builder.build())
     }
 
     @Synchronized fun incoming(call: IncomingCall?) {
         if (call == null) { manager.cancel(CALL_NOTIFICATION); return }
         if (!allowed()) return
-        val builder = base(CALLS, R.string.incoming_unlock).setCategory(Notification.CATEGORY_CALL)
+        val builder = base(CALLS, R.string.incoming_unlock, R.drawable.ic_call).setCategory(Notification.CATEGORY_CALL)
             .setOngoing(true).setOnlyAlertOnce(true).setTimeoutAfter(45_000)
         val openCall = PendingIntent.getActivity(app, 22,
             Intent(app, IncomingCallActivity::class.java)
@@ -119,8 +136,10 @@ class MessageNotifications(private val app: ItoApplication) {
         const val READY = "ito-messaging-ready"
         const val MESSAGES = "ito-messages"
         const val CALLS = "ito-incoming-calls"
+        const val MISSED = "ito-missed-calls"
         const val READY_NOTIFICATION = 20
         private const val MESSAGE_NOTIFICATION = 21
         private const val CALL_NOTIFICATION = 22
+        private const val MISSED_NOTIFICATION = 23
     }
 }

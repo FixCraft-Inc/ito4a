@@ -25,7 +25,12 @@ import com.fixcraft.ito.security.LockChallenge
 import com.fixcraft.ito.messaging.MessageNotifications
 import com.fixcraft.ito.messaging.MessagingService
 import com.fixcraft.ito.messaging.Ringing
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import com.fixcraft.ito.call.CallAudioService
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 class ItoApplication : Application() {
     val appLock by lazy { AppLockController(this) }
@@ -38,7 +43,7 @@ class ItoApplication : Application() {
         onRingEnd = { peer, end -> ringing.ended(peer, end) },
         onMessage = { peer, text -> notifications.message(peer, text) },
         onSealedActivity = { notifications.sealedActivity() }) }
-    val ringing: Ringing by lazy { Ringing(calls, messenger, appLock::requireAccess) }
+    val ringing: Ringing by lazy { Ringing(calls, messenger, appLock::requireAccess, onMissed = notifications::missed) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val visible = MutableStateFlow(false)
     private val visibleActivities = mutableSetOf<Activity>()
@@ -101,6 +106,15 @@ class ItoApplication : Application() {
             }
         }
         scope.launch { ringing.incoming.collect { notifications.incoming(it) } }
+        // Call and Answer ask for the microphone before they start an attempt, so
+        // the call's foreground owner starts with it while Ito is on screen.
+        scope.launch {
+            calls.view.map { it.phase.active }.distinctUntilChanged().collect { active ->
+                if (active && visible.value && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    try { CallAudioService.start(this@ItoApplication) } catch (_: Exception) { calls.audioFailed() }
+                }
+            }
+        }
     }
     private val audioForeground = MutableStateFlow(false)
     val foregroundAudio: StateFlow<Boolean> = audioForeground

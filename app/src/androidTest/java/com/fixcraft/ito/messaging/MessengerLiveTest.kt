@@ -55,7 +55,10 @@ class MessengerLiveTest {
         while (System.nanoTime() < deadline) { if (predicate()) return; Thread.sleep(50) }
         fail("Timed out: $label")
     }
-    private fun click(resource: Int) = compose.onNode(hasText(context.getString(resource)) and hasClickAction()).performClick()
+    // Icon buttons carry their label as a content description.
+    private fun click(resource: Int) = context.getString(resource).let { label ->
+        compose.onNode((hasText(label) or androidx.compose.ui.test.hasContentDescription(label)) and hasClickAction()).performClick()
+    }
     private fun files(directory: File) = directory.walkTopDown().filter(File::isFile).associate {
         it.relativeTo(directory).invariantSeparatorsPath to it.readBytes()
     }
@@ -117,10 +120,12 @@ class MessengerLiveTest {
                 (app.callBook.state.value as BookState.Ready).contacts.any { it.key.contentEquals(bobKey) && it.verified } &&
                     (bobBook.state.value as BookState.Ready).contacts.any { it.key.contentEquals(aliceKey) && it.verified }
             }
+            // Digits to compare leave with the completed pairing, so the chat list shows none.
+            await("pairing digits cleared") { app.messenger.state.value.shortCode.isEmpty() && bob.state.value.shortCode.isEmpty() }
             UiDevice.getInstance(instrumentation).pressBack()
             capture.secureFrame("live-chat-list-paired")
             compose.onNode(hasText("Bob") and hasClickAction()).performClick()
-            val composer = hasText(context.getString(R.string.chat_message)) and androidx.compose.ui.test.hasSetTextAction()
+            val composer = androidx.compose.ui.test.hasSetTextAction()
             compose.waitUntil(10_000) { compose.onAllNodes(composer).fetchSemanticsNodes().size == 1 }
             compose.onNode(composer).performTextInput("Public fixture message")
             click(R.string.chat_send)
@@ -133,6 +138,7 @@ class MessengerLiveTest {
             bob.send(aliceKey, "Reply from the fixture".toByteArray())
             await("reply") { app.chatHistory.messages(bobKey).useRecords { it.any { m -> !m.outgoing && m.text.toString(Charsets.UTF_8) == "Reply from the fixture" } } }
             compose.waitUntil(10_000) { compose.onNode(hasText("Reply from the fixture")).isDisplayed() }
+            capture.secureFrame("live-chat-conversation")
             compose.onNode(hasText("Reply from the fixture")).assertIsDisplayed()
             await("open chat sends read receipt") { bobHistory.messages(aliceKey).useRecords { it.any { m -> m.outgoing && m.status == 3 } } }
 

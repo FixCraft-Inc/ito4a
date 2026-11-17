@@ -17,6 +17,15 @@ class LocalMessage(val id: ByteArray, val peer: ByteArray, val outgoing: Boolean
 class LocalCall(val id: ByteArray, val peer: ByteArray, val initiator: Boolean, val timeUnix: Long,
                 val durationMs: Long, val result: Int) : AutoCloseable {
     override fun close() { id.fill(0); peer.fill(0) }
+
+    companion object {
+        // Ring ends are stored below every core result, so the two never collide.
+        private const val RING_BASE = -1100
+        fun ringResult(reason: Int): Int { require(reason in 1..4); return RING_BASE - reason }
+
+        /** The ring end (1 canceled, 2 declined, 3 busy, 4 missed) a stored [result] records, or null for a call that connected. */
+        fun ringEnd(result: Int): Int? = (RING_BASE - result).takeIf { it in 1..4 }
+    }
     internal fun copyRecord() = LocalCall(id.copyOf(), peer.copyOf(), initiator, timeUnix, durationMs, result)
 }
 

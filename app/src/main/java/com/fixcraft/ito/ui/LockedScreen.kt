@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -54,8 +56,12 @@ fun LockedScreen(locked: Boolean, canStop: Boolean, callActive: Boolean,
                 OutlinedButton(onClick = onDecline) { Text(stringResource(R.string.decline)) }
             }
             if (callActive) Button(onClick = onEndCall, modifier = Modifier.heightIn(min = 48.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError)) { Text(stringResource(R.string.end_call)) }
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.ito.hangUp,
+                    contentColor = MaterialTheme.ito.onHangUp)) {
+                Icon(painterResource(R.drawable.ic_call_end), null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.end_call))
+            }
             Button(onClick = onUnlock, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text(stringResource(if (locked) R.string.unlock_app else R.string.retry))
             }

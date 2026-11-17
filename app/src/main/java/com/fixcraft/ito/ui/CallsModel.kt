@@ -29,6 +29,9 @@ class CallsModel(application: Application) : AndroidViewModel(application) {
     val history get() = app.chatHistory
     private val mutableNotice = MutableStateFlow<Int?>(null)
     val notice = mutableNotice.asStateFlow()
+    private val photoRevision = MutableStateFlow(0)
+    /** Changes whenever a contact or owner photo is set or removed. */
+    val photos = photoRevision.asStateFlow()
 
     init { open() }
 
@@ -79,7 +82,27 @@ class CallsModel(application: Application) : AndroidViewModel(application) {
         catch (_: Exception) { mutableNotice.value = R.string.audio_start_failed }
     }
     fun muteAudio() = com.fixcraft.ito.call.CallAudioService.action(app, com.fixcraft.ito.call.CallAudioService.MUTE)
-    fun speakerAudio() = com.fixcraft.ito.call.CallAudioService.action(app, com.fixcraft.ito.call.CallAudioService.SPEAKER)
+    fun selectRoute(id: Int) = com.fixcraft.ito.call.CallAudioService.route(app, id)
+
+    /** Call and Answer need the microphone. Ito does not start a silent call. */
+    fun microphoneRefused() { mutableNotice.value = R.string.call_microphone_needed }
+
+    /** Sets the photo of a contact, or the owner's for a null [peer], from a picked image. */
+    fun setPhoto(peer: ByteArray?, picked: android.net.Uri) { viewModelScope.launch(Dispatchers.IO) {
+        val jpeg = try { ContactPhotos.encode(app, picked) }
+        catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (_: Exception) { mutableNotice.value = R.string.photo_unreadable; return@launch }
+        try { app.chatHistory.setPhoto(peer, jpeg); photoRevision.value++ }
+        catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (_: Exception) { mutableNotice.value = R.string.photo_not_saved }
+        finally { jpeg.fill(0) }
+    } }
+
+    fun removePhoto(peer: ByteArray?) { viewModelScope.launch(Dispatchers.IO) {
+        try { app.chatHistory.setPhoto(peer, null); photoRevision.value++ }
+        catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (_: Exception) { mutableNotice.value = R.string.photo_not_saved }
+    } }
     fun dismissCall() = app.calls.dismiss()
 
     private suspend fun <T> change(action: com.fixcraft.ito.call.CallBook.() -> T): T? = withContext(Dispatchers.IO) {

@@ -47,6 +47,45 @@ class ChatRepositoryTest {
         expect(ContentFailure.Corrupt) { owner().session(peer) }
     }
 
+    @Test fun photosAreBoundedJpegLabelsThatHistoryDeletionKeeps() {
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 1, 2, 3)
+        assertNull(owner().photo(peer))
+        owner().setPhoto(peer, jpeg)
+        owner().setPhoto(null, jpeg.copyOf().also { it[6] = 9 })
+        assertArrayEquals(jpeg, owner().photo(peer))
+        assertEquals(9.toByte(), owner().photo(null)!![6])
+        // Only a JPEG within the bound is accepted.
+        expect(ContentFailure.InvalidInput) { owner().setPhoto(peer, "not an image".toByteArray()) }
+        expect(ContentFailure.InvalidInput) { owner().setPhoto(peer, jpeg.copyOf(ChatRepository.MAX_PHOTO + 1)) }
+        // Photos are not history: deleting history keeps them, setting null removes one.
+        owner().recordLegacy(id, peer, false, "text".toByteArray(), now / 1000)
+        owner().deleteHistory(peer)
+        assertArrayEquals(jpeg, owner().photo(peer))
+        owner().setPhoto(peer, null)
+        assertNull(owner().photo(peer))
+        assertNotNull(owner().photo(null))
+    }
+
+    @Test fun aPhotoCannotBeMovedToAnotherContactTheOwnerOrAnotherRecord() {
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xDB.toByte())
+        owner().setPhoto(peer, jpeg)
+        val directory = File(parent, "chats")
+        val file = directory.listFiles()!!.single { it.name.endsWith(".photo") }
+        val otherName = other.joinToString("") { "%02x".format(it.toInt() and 255) }
+        // Private copies, so only the record's authenticated domain can refuse them.
+        fun moved(name: String) = file.copyTo(File(directory, name)).also {
+            Files.setPosixFilePermissions(it.toPath(), java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+        }
+        moved("$otherName.photo")
+        expect(ContentFailure.Corrupt) { owner().photo(other) }
+        moved("own.photo")
+        expect(ContentFailure.Corrupt) { owner().photo(null) }
+        moved(file.name.replace("photo", "history"))
+        expect(ContentFailure.Corrupt) { owner().messages(peer) }
+        // The unchanged record still opens, so the refusals above are the domain's.
+        assertArrayEquals(jpeg, owner().photo(peer))
+    }
+
     @Test fun deletionAndTimerKeepTombstonesWithoutResettingSession() {
         owner().saveSession(peer, byteArrayOf(1, 2, 3))
         owner().recordLegacy(id, peer, false, "gone".toByteArray(), now / 1000)

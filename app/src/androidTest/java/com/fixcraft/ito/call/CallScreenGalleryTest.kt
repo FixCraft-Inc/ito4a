@@ -46,6 +46,10 @@ class CallScreenGalleryTest {
     private val contact = Contact(key, "Aiko", CallNative.TRUST_VERIFIED, "ito-contact:1:fixture",
         "b66dd75f07e8c8c942f8c0929114ae0a707e90ce9bc4949c61498b147c61538b", null, null)
 
+    // Public fixture devices: the phone's own two and one headset.
+    private val routes = listOf(AudioRoute(1, AudioRouteKind.Earpiece, ""), AudioRoute(2, AudioRouteKind.Speaker, ""),
+        AudioRoute(7, AudioRouteKind.Bluetooth, "Fixture headset"))
+
     private val frames = listOf(
         "connecting" to CallView(phase = CallPhase.Connecting, initiator = true, peer = key),
         "inviting" to CallView(phase = CallPhase.Inviting, initiator = true, peer = key,
@@ -56,9 +60,14 @@ class CallScreenGalleryTest {
         "incoming-consent" to CallView(phase = CallPhase.Consent, peer = key, peerAuthenticated = true),
         "active-before-audio" to CallView(phase = CallPhase.Media, peer = key, peerAuthenticated = true),
         "active-audio-muted" to CallView(phase = CallPhase.Media, peer = key, peerAuthenticated = true,
-            voiceActive = true, muted = true, speaker = true, sentBytes = 48_000, receivedBytes = 47_520),
+            voiceActive = true, muted = true, audioRoutes = routes, audioRoute = routes[1],
+            connectedAt = android.os.SystemClock.elapsedRealtime() - 83_000, sentBytes = 48_000, receivedBytes = 47_520),
         "active-audio-on" to CallView(phase = CallPhase.Media, peer = key, peerAuthenticated = true,
-            voiceActive = true, muted = false, speaker = false),
+            voiceActive = true, muted = false, audioRoutes = routes.take(2), audioRoute = routes[0],
+            connectedAt = android.os.SystemClock.elapsedRealtime() - 5_000),
+        "active-bluetooth" to CallView(phase = CallPhase.Media, peer = key, peerAuthenticated = true,
+            voiceActive = true, audioRoutes = routes, audioRoute = routes[2],
+            connectedAt = android.os.SystemClock.elapsedRealtime() - 3_725_000),
         "ending" to CallView(phase = CallPhase.Ending, peer = key, peerAuthenticated = true),
         "ended-by-you" to CallView(phase = CallPhase.Ended, peer = key, peerAuthenticated = true, historySaved = true,
             sentBytes = 48_000, receivedBytes = 47_520),

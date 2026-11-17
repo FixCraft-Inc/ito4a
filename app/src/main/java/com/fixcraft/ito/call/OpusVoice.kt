@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
@@ -14,7 +15,10 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import androidx.annotation.RequiresApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ArrayBlockingQueue
@@ -24,11 +28,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Android owns devices and the maintained platform Opus implementation.
  * No sockets or crypto live here. One capture and one playout worker, joined
  * before codecs/devices are released. Unsupported codecs fail the call.
+ * [routesChanged] runs on the main thread when devices come or go or the
+ * route changes, while audio runs.
  */
 class OpusVoice(
     context: Context,
     private val send: (Long, ByteArray) -> Boolean,
     private val failed: () -> Unit,
+    private val routesChanged: () -> Unit = {},
 ) : AutoCloseable {
     private val app = context.applicationContext
     private val manager = app.getSystemService(AudioManager::class.java)
@@ -45,6 +52,14 @@ class OpusVoice(
     private var priorMode = AudioManager.MODE_NORMAL
     private var priorSpeaker = false
     private var focusHeld = false
+    // Before Android 12 Bluetooth needs its own SCO link, started only on request.
+    @Volatile private var legacyBluetooth = false
+    private val main = Handler(Looper.getMainLooper())
+    private val devices = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = routesChanged()
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = routesChanged()
+    }
+    private var communicationListener: Any? = null
     private val playoutClock = PlayoutClock()
     private val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
@@ -100,22 +115,82 @@ class OpusVoice(
             }
             capture = worker("ito-capture", ::captureLoop)
             playout = worker("ito-playout", ::playoutLoop)
+            manager.registerAudioDeviceCallback(devices, main)
+            if (Build.VERSION.SDK_INT >= 31) communicationListener = listenForRoute()
         } catch (error: Throwable) { close(); throw error }
+    }
+
+    @RequiresApi(31)
+    private fun listenForRoute(): AudioManager.OnCommunicationDeviceChangedListener {
+        val listener = AudioManager.OnCommunicationDeviceChangedListener { routesChanged() }
+        manager.addOnCommunicationDeviceChangedListener(app.mainExecutor, listener)
+        return listener
     }
 
     fun mute(value: Boolean) { muted.set(value) }
 
-    @Synchronized fun speaker(value: Boolean) {
-        check(lifecycle.running)
+    /** The devices this call can use now, phone first. Empty unless audio runs. */
+    fun routes(): List<AudioRoute> {
+        if (!lifecycle.running) return emptyList()
+        if (Build.VERSION.SDK_INT >= 31) return AudioRoutes.distinct(manager.availableCommunicationDevices.mapNotNull(::route))
+        val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        return AudioRoutes.legacy(outputs.map { it.type },
+            outputs.filter { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }.map { it.productName.toString() })
+    }
+
+    /** The route in use, as one of [routes]. */
+    fun currentRoute(): AudioRoute? {
+        val routes = routes()
         if (Build.VERSION.SDK_INT >= 31) {
-            if (value) {
-                val device = manager.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                check(device != null && manager.setCommunicationDevice(device))
-            } else manager.clearCommunicationDevice()
-        } else {
-            @Suppress("DEPRECATION")
-            manager.isSpeakerphoneOn = value
+            val current = manager.communicationDevice?.let(::route) ?: return null
+            return routes.firstOrNull { it.kind == current.kind && it.name == current.name } ?: current
         }
+        @Suppress("DEPRECATION")
+        val kind = when { manager.isSpeakerphoneOn -> AudioRouteKind.Speaker; legacyBluetooth -> AudioRouteKind.Bluetooth; else -> null }
+        return routes.firstOrNull { it.kind == kind }
+            ?: routes.firstOrNull { it.kind != AudioRouteKind.Speaker && it.kind != AudioRouteKind.Bluetooth }
+    }
+
+    /**
+     * Moves call audio to one of [routes]. A headset carries the microphone
+     * too. Returns false when Android refuses or the device has gone, leaving
+     * the route unchanged. A refused route does not end the call.
+     */
+    @Synchronized fun selectRoute(id: Int): Boolean {
+        if (!lifecycle.running) return false
+        val chosen = routes().firstOrNull { it.id == id } ?: return false
+        if (Build.VERSION.SDK_INT >= 31) {
+            val device = manager.availableCommunicationDevices.firstOrNull { candidate ->
+                route(candidate)?.let { it.kind == chosen.kind && it.name == chosen.name } == true
+            } ?: return false
+            return manager.setCommunicationDevice(device)
+        }
+        @Suppress("DEPRECATION")
+        when (chosen.kind) {
+            AudioRouteKind.Speaker -> { stopLegacyBluetooth(); manager.isSpeakerphoneOn = true }
+            AudioRouteKind.Bluetooth -> {
+                manager.isSpeakerphoneOn = false
+                manager.startBluetoothSco()
+                manager.isBluetoothScoOn = true
+                legacyBluetooth = true
+            }
+            else -> { stopLegacyBluetooth(); manager.isSpeakerphoneOn = false }
+        }
+        main.post { routesChanged() }
+        return true
+    }
+
+    private fun route(device: AudioDeviceInfo): AudioRoute? = AudioRoutes.kindOf(device.type)?.let { kind ->
+        val external = kind != AudioRouteKind.Earpiece && kind != AudioRouteKind.Speaker
+        AudioRoute(device.id, kind, if (external) device.productName.toString() else "")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun stopLegacyBluetooth() {
+        if (!legacyBluetooth) return
+        legacyBluetooth = false
+        manager.isBluetoothScoOn = false
+        manager.stopBluetoothSco()
     }
 
     /** Takes ownership. Old speech is dropped and wiped, including on shutdown. */
@@ -238,6 +313,11 @@ class OpusVoice(
         lifecycle.close()
         var cleanupFailed = false
         fun cleanup(action: () -> Unit) { try { action() } catch (_: Exception) { cleanupFailed = true } }
+        cleanup { manager.unregisterAudioDeviceCallback(devices) }
+        if (Build.VERSION.SDK_INT >= 31) communicationListener?.let { listener ->
+            cleanup { manager.removeOnCommunicationDeviceChangedListener(listener as AudioManager.OnCommunicationDeviceChangedListener) }
+        }
+        communicationListener = null
         cleanup { recorder?.stop() }
         var interrupted = false
         fun join(worker: Thread?) {
@@ -257,9 +337,12 @@ class OpusVoice(
         cleanup { decoder?.release() }; decoder = null
         if (focusHeld) {
             if (Build.VERSION.SDK_INT >= 31) cleanup { manager.clearCommunicationDevice() }
-            else cleanup {
-                @Suppress("DEPRECATION")
-                manager.isSpeakerphoneOn = priorSpeaker
+            else {
+                cleanup(::stopLegacyBluetooth)
+                cleanup {
+                    @Suppress("DEPRECATION")
+                    manager.isSpeakerphoneOn = priorSpeaker
+                }
             }
             cleanup { manager.mode = priorMode }
             cleanup { manager.abandonAudioFocusRequest(focus) }

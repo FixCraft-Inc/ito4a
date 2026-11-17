@@ -72,8 +72,8 @@ cannot grant access.
 
 When ordinary connections stop on backgrounding, the connection owner joins
 the mailbox worker, closes native sessions and clears transient pairing display
-state. Cleanup survives Activity destruction. An active foreground audio call
-retains its connection and mailbox worker. Enabled app lock refuses new
+state. Cleanup survives Activity destruction. A call's foreground service retains
+its connection and mailbox worker from the call's first phase. Enabled app lock refuses new
 message access until unlock, while Disabled permits the retained run to process
 messages. The opt-in messaging service can retain this connection independently
 of audio. Newly arrived sealed items wait for unlock, and notifications hide
@@ -95,7 +95,9 @@ invalidates pending proof. Activity destruction cancels that Activity's
 challenge, including during rotation, so the user can retry a fresh prompt.
 
 An already authorized foreground call may retain its existing native handles
-and media keys while the app is locked. Locking does not substitute a route,
+and media keys while the app is locked. Call and Answer request that call's
+content while access is available, so its audio can begin after locking
+without new key access. Locking does not substitute a route,
 provider or contact and does not authorize a new call or content operation.
 Hangup, Stop and teardown remain available. The locked/unavailable screen offers
 generic End call and Stop connection actions while the foreground audio owner

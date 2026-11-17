@@ -25,16 +25,18 @@ through a [call relay](https://github.com/FixCraft-Inc/ito/blob/main/relay/READM
 The Linux `ito-call` endpoint runs the same core. The app's Chats tab pairs
 contacts, compares safety codes and exchanges ratcheted text through a shared
 mailbox relay. It shows delivery/read receipts, per-chat history, local deletion
-and the shared auto-delete timer. Existing identity-1 contacts must pair again.
+and the shared auto-delete timer. Contacts and the owner can have photos, kept
+encrypted on this phone and never sent. Existing identity-1 contacts must pair again.
 All QR codes use one scanner, with an explanation for legacy or unknown input.
 Contacts on another relay wait for separate routing support.
 
 Verified, paired contacts call without another QR exchange. An authenticated
 incoming screen offers Accept and Decline before the responder joins. The
 screen can appear over the phone's lock screen when Android permits full-screen
-call alerts, with a ringing notification as fallback. The
-[audio adapter](docs/VOICE.md) supplies user-started mono Opus capture/playback
-and a separate foreground audio service. Settings can keep the selected
+call alerts, with a ringing notification as fallback. Call and Answer start
+audio once the call connects. The [audio adapter](docs/VOICE.md) supplies mono
+Opus capture/playback, the choice of phone, speaker, headset or Bluetooth, and
+a foreground call service that keeps a minimized call running. Settings can keep the selected
 mailbox connection open while Ito is closed, with a permanent notification.
 This is off by default. App lock delays authentication of newly arrived rings
 until unlock. [Android messaging lifecycle](docs/MESSAGING_LIFECYCLE.md)

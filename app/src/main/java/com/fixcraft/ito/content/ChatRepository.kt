@@ -13,10 +13,31 @@ class ChatMessage(val id: ByteArray, val outgoing: Boolean, val kind: Int, val s
     val arrived: Long, val text: ByteArray, val flags: Int, var status: Int, val timer: Int = 0,
     val operation: ByteArray = ByteArray(16)) : AutoCloseable {
     override fun close() { id.fill(0); text.fill(0); operation.fill(0) }
+
+    companion object {
+        // [status] in delivery order. An incoming message below READ is unread.
+        const val QUEUED = 0
+        const val SENT = 1
+        const val DELIVERED = 2
+        const val READ = 3
+        /** [flags] bit set on a message its sender transmitted again. */
+        const val RESENT = 1
+    }
 }
 
 class ChatSettings(val name: String, val readReceipts: Boolean)
-class ChatSummary(val text: String, val kind: Int, val time: Long, val unread: Int, val removed: Boolean)
+/**
+ * The latest entry of one chat, for the chat list. [outgoing] and [status]
+ * describe the last message, or the last call's direction when [kind] is
+ * [CALL]. [callResult] is that call's stored result.
+ */
+class ChatSummary(val text: String, val kind: Int, val time: Long, val unread: Int, val removed: Boolean,
+    val outgoing: Boolean = false, val status: Int = 0, val callResult: Int = 0) {
+    companion object {
+        /** [kind] when the latest entry is a call. It is not a message kind. */
+        const val CALL = 100
+    }
+}
 internal class RetiredInbox(val peer: ByteArray, val fingerprint: ByteArray, val service: String,
     val secret: ByteArray) : AutoCloseable {
     override fun close() { secret.fill(0) }
@@ -182,6 +203,29 @@ class ChatRepository internal constructor(private val root: File,
             try { settingsFile().replace(bytes) } finally { bytes.fill(0) }
         } finally { name.fill(0) }
     }
+    /**
+     * The picture this phone shows for a contact, or for the owner when [peer]
+     * is null. Photos are local labels like names: nothing sends them.
+     */
+    @Synchronized fun photo(peer: ByteArray?): ByteArray? = photoFile(peer).load()
+
+    /** Replaces or, for null, deletes a photo. Only a bounded JPEG is accepted. */
+    @Synchronized fun setPhoto(peer: ByteArray?, jpeg: ByteArray?) {
+        if (jpeg == null) { photoFile(peer).delete(); return }
+        if (jpeg.size !in 4..MAX_PHOTO || jpeg[0] != 0xFF.toByte() || jpeg[1] != 0xD8.toByte() || jpeg[2] != 0xFF.toByte())
+            throw ContentException(ContentFailure.InvalidInput)
+        photoFile(peer).replace(jpeg)
+    }
+
+    private fun photoFile(peer: ByteArray?): EncryptedContentFile {
+        val owner = if (peer == null) "own" else {
+            if (peer.size != 32) throw ContentException(ContentFailure.InvalidInput)
+            peer.joinToString("") { "%02x".format(it.toInt() and 255) }
+        }
+        return EncryptedContentFile(root, "$owner.photo", ".$owner.photo.tmp", byteArrayOf(73, 84, 79, 80, 1),
+            "ito/chat-storage/photo/1/$owner".toByteArray(Charsets.US_ASCII), MAX_PHOTO, useKey, requireAccess, syncDirectory)
+    }
+
     private fun settingsFile() = EncryptedContentFile(root, "settings.bin", ".settings.tmp", byteArrayOf(73, 84, 79, 83, 1),
         "ito/chat-storage/settings/1".toByteArray(Charsets.US_ASCII), 134, useKey, requireAccess, syncDirectory)
 
@@ -257,8 +301,11 @@ class ChatRepository internal constructor(private val root: File,
         val time = maxOf(message?.arrived ?: 0, (call?.timeUnix ?: 0) * 1000)
         val callLast = call != null && call.timeUnix * 1000 > (message?.arrived ?: 0)
         return ChatSummary(if (callLast) "" else message?.text?.toString(Charsets.UTF_8) ?: "",
-            if (callLast) 100 else message?.kind ?: 0, time,
-            state.messages.count { !it.outgoing && it.status < 3 }, state.removed)
+            if (callLast) ChatSummary.CALL else message?.kind ?: 0, time,
+            state.messages.count { !it.outgoing && it.status < 3 }, state.removed,
+            outgoing = if (callLast) call!!.initiator else message?.outgoing ?: false,
+            status = if (callLast) 0 else message?.status ?: 0,
+            callResult = if (callLast) call!!.result else 0)
     }
     private fun file(peer: ByteArray, purpose: String, maximum: Int): EncryptedContentFile {
         if (peer.size != 32) throw ContentException(ContentFailure.InvalidInput)
@@ -269,11 +316,14 @@ class ChatRepository internal constructor(private val root: File,
     }
 
     internal companion object {
+        /** A 320-pixel square JPEG at the app's quality is well under this. */
+        const val MAX_PHOTO = 131_072
+
         internal fun recordRing(state: ChatSnapshot, peer: ByteArray, payload: ByteArray, initiator: Boolean, now: Long) {
             require(payload.size == 33 && payload[32].toInt() in 1..4)
             val id = payload.copyOfRange(0, 16)
             if (state.calls.none { it.id.contentEquals(id) }) state.calls.add(
-                LocalCall(id, peer.copyOf(), initiator, now / 1000, 0, -1100 - payload[32].toInt()))
+                LocalCall(id, peer.copyOf(), initiator, now / 1000, 0, LocalCall.ringResult(payload[32].toInt())))
         }
         private const val TOMBSTONE_MS = 30L * 24 * 60 * 60 * 1000
         private val DURATIONS = longArrayOf(0, 86_400_000, 604_800_000, 2_592_000_000)

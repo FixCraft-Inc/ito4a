@@ -24,6 +24,7 @@ import androidx.compose.ui.test.then
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
@@ -171,7 +172,7 @@ class CallFlowsTest {
             compose.activity.setContent {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(true) then DeviceConfigurationOverride.FontScale(2f)) {
                     // The app's Scaffold paints the theme's background behind the page.
-                    ItoTheme { Surface(color = MaterialTheme.colorScheme.background) { ChatsPage(model, "home", {}, false) {} } }
+                    ItoTheme { Surface(color = MaterialTheme.colorScheme.background) { ChatsPage(model, {}) {} } }
                 }
             }
         }
@@ -187,15 +188,14 @@ class CallFlowsTest {
                 node.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.joinToString()
             assertTrue("an action without a label: ${node.config}", spoken.isNotBlank())
         }
-        scrollTo(hasText(text(R.string.chat_scan)) and hasClickAction())
         snapshot("chats-dark-2x-end")
     }
 
     @Test fun e_keyboardReachesAndActivatesActions() {
         ensureIdentity()
         compose.onNode(hasText(text(R.string.chats)) and isSelectable()).performClick()
+        // Add contact is the list's floating button, outside any scrolling content.
         val target = hasText(text(R.string.add_contact)) and hasClickAction()
-        compose.onNode(hasScrollAction()).performScrollToNode(target)
         // Real key events from the emulator's hardware keyboard, through the window.
         var focused = false
         for (step in 1..60) {
@@ -298,9 +298,12 @@ class CallFlowsTest {
     private fun exists(matcher: SemanticsMatcher) = compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(value: String) {
-        val matcher = hasText(value) and hasClickAction()
+        // Icon buttons carry their label as a content description.
+        val matcher = (hasText(value) or hasContentDescription(value)) and hasClickAction()
         compose.waitUntil(5000) { exists(matcher) }
-        if (exists(hasScrollAction())) compose.onNode(hasScrollAction()).performScrollToNode(matcher)
+        // Scroll only the list that holds the target. Top-bar and floating buttons are outside any list.
+        val list = hasScrollAction() and hasAnyDescendant(matcher)
+        if (exists(list)) compose.onNode(list).performScrollToNode(matcher)
         // The node's click action, as TalkBack activates it. Injected touches
         // can land on the IME or system bars over the button; test e_ covers
         // real key input.

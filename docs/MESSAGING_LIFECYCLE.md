@@ -15,7 +15,9 @@ replying, leaving the caller's deadline to end its attempt.
 When Ito is hidden, authenticated incoming calls request Android's full-screen
 call alert. The dedicated, private activity can wake and appear over the device
 lock screen, and shows only the invitation it was opened for. It offers Accept
-and Decline. Accept dismisses the device keyguard before opening the full app.
+and Decline. Accept dismisses the device keyguard, asks for the microphone if
+Android has not granted it, then opens the full app. Refusing the microphone
+keeps the call ringing until its deadline.
 A canceled device unlock leaves the invitation pending until its original
 deadline. Decline needs no device unlock. A stale notification cannot open or
 answer a different invitation. Invitation expiry or cancellation closes the
@@ -33,7 +35,8 @@ This permission neither grants app-key access nor starts microphone capture.
 from the visible app starts a nonsticky foreground service with a permanent
 notification. On Android 14 and later it declares `specialUse`: a user-enabled
 persistent encrypted mailbox connection without push. It does not capture
-audio. Microphone access belongs to the separate, user-started audio service.
+audio. Microphone access belongs to the separate call service, which starts
+with a call the person makes or answers.
 Android notification permission and enabled notification channels are required
 to enable background reachability. Refusal leaves the setting off.
 
@@ -60,10 +63,15 @@ deadline. The locked screen and notification hide the contact and offer unlock
 or decline, never acceptance. Unlock does not extend its deadline. An already
 authorized audio call retains the existing borrower behavior in APP_LOCK.
 
+Each notice looks different in the shade. The background connection says so
+in its title, with a connection icon. An incoming call shows the caller and a
+call icon. A call that rang here and ended unanswered leaves a missed-call
+notice when Ito is not on screen. The chat's history records it either way.
+
 With access available, message notifications may show the contact and text.
 Settings can hide text everywhere. Notifications use private visibility and
 a generic public version. Backgrounding with app lock enabled immediately
-removes previously visible message text and caller labels. No invitation,
+removes previously visible message text, missed-call names and caller labels. No invitation,
 message body, identity key or contact ID is placed in a PendingIntent. Incoming
 screen and decline intents carry only an opaque, process-local action token.
 

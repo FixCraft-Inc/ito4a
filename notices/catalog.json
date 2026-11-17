@@ -16,7 +16,8 @@
     "nlohmann-LICENSE-NOTICES.md",
     "nlohmann-SOURCE-NOTICES.txt",
     "Hedley-CC0-1.0.txt",
-    "NDK-LLVM-NOTICE.txt"
+    "NDK-LLVM-NOTICE.txt",
+    "Apache-2.0.txt"
   ],
   "sourceComponents": [
     {
@@ -27,6 +28,15 @@
       "notices": [
         "ITO-COPYRIGHT.txt",
         "LICENSE"
+      ]
+    },
+    {
+      "name": "Material Symbols",
+      "version": "google/material-design-icons 10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7",
+      "license": "Apache-2.0",
+      "role": "interface icons, copied as Android vector drawables",
+      "notices": [
+        "Apache-2.0.txt"
       ]
     },
     {
@@ -263,7 +273,7 @@
     },
     "THIRD_PARTY_LICENSES.md": {
       "path": "THIRD_PARTY_LICENSES.md",
-      "sha256": "e841b278e1b34bec46b0d59a826f3a83a919cf4ff322595134ab13f9ffb38941",
+      "sha256": "c814c58829ce0ad05d3bd004940d666febb7d5c6bde6f0106c30cfbdbce880fd",
       "origin": "Ito application source THIRD_PARTY_LICENSES.md"
     },
     "Kotlin-1.9.22-NOTICE.txt": {

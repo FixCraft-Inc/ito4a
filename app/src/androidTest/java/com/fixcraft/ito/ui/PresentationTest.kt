@@ -81,8 +81,9 @@ class PresentationTest {
 
     @Test fun settingsOfferOnlyControlsThatWork() {
         compose.setContent { ItoTheme { Surface(color = MaterialTheme.colorScheme.background) { SettingsPage(Preferences()) } } }
-        // App lock and Advanced mode change behaviour. Routing and audio are fixed, so they are statements.
-        assertEquals(2, compose.onAllNodes(role(Role.Switch)).fetchSemanticsNodes().size)
+        // App lock, background reachability, notification text and Advanced mode change behaviour.
+        // Routing and audio are fixed, so they are statements.
+        assertEquals(4, compose.onAllNodes(role(Role.Switch)).fetchSemanticsNodes().size)
         assertEquals(0, compose.onAllNodes(role(Role.RadioButton)).fetchSemanticsNodes().size)
         assertTrue(exists(hasText(context.getString(R.string.call_route_value))))
         assertTrue(exists(hasText(context.getString(R.string.call_audio_value))))

@@ -22,7 +22,8 @@ class IncomingCall(val peer: ByteArray, val id: ByteArray,
  */
 class Ringing(private val calls: CallController, private val messenger: Messenger,
     private val requireAccess: () -> Unit, private val nanoTime: () -> Long = System::nanoTime,
-    private val clock: () -> Long = System::currentTimeMillis) {
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val onMissed: (peer: ByteArray) -> Unit = {}) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val mutableIncoming = MutableStateFlow<IncomingCall?>(null)
     val incoming = mutableIncoming.asStateFlow()
@@ -109,7 +110,8 @@ class Ringing(private val calls: CallController, private val messenger: Messenge
         scope.launch {
             try {
                 mutableIncoming.value?.let { notice ->
-                    if (RingToken.matches(notice.peer, notice.id, peer, end)) clear()
+                    // The caller stopped before anyone answered here.
+                    if (RingToken.matches(notice.peer, notice.id, peer, end)) { clear(); onMissed(notice.peer) }
                 }
                 outgoing?.let { notice ->
                     if (RingToken.matches(notice.peer, notice.id, peer, end) && !calls.view.value.peerAuthenticated) {
@@ -132,6 +134,7 @@ class Ringing(private val calls: CallController, private val messenger: Messenge
     private fun finish(reason: Int) {
         val notice = mutableIncoming.value ?: return
         clear()
+        if (reason == RingToken.MISSED) onMissed(notice.peer)
         // Lock may deny new signing/session access. Destruction always happens,
         // even when a decline cannot be sent until the caller's own timeout.
         try { messenger.endRing(notice.peer, notice.id, reason, initiator = false) }

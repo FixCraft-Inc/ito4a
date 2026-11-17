@@ -1,12 +1,15 @@
 package com.fixcraft.ito
 
+import android.Manifest
 import android.app.KeyguardManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -17,12 +20,23 @@ import com.fixcraft.ito.security.LockState
 import com.fixcraft.ito.ui.IncomingCallContent
 import com.fixcraft.ito.ui.ItoTheme
 import com.fixcraft.ito.ui.LockedScreen
+import com.fixcraft.ito.ui.rememberPhoto
 
 /** A lock-screen window for one authenticated invitation, with no access to app navigation. */
 class IncomingCallActivity : ComponentActivity() {
     private val app get() = application as ItoApplication
     private var token by mutableStateOf<String?>(null)
     private var dismissing = false
+    private var microphoneRefused by mutableStateOf(false)
+    // Answer asks for the microphone after the keyguard, so the request never appears over it.
+    // The invitation it answers is the one the request was made for.
+    private var awaitingMicrophone: String? = null
+    private val microphone = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val expected = awaitingMicrophone
+        awaitingMicrophone = null
+        if (expected == null) return@registerForActivityResult
+        if (granted) completeOpen(expected, accept = true) else microphoneRefused = true
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,8 +57,8 @@ class IncomingCallActivity : ComponentActivity() {
             } else ItoTheme {
                 if (lock == LockState.Disabled || lock == LockState.Unlocked) {
                     val contact = (book as? BookState.Ready)?.contacts?.firstOrNull { it.key.contentEquals(call.peer) }
-                    IncomingCallContent(contact, { openApp(call.actionToken, accept = true) },
-                        { app.ringing.decline(call.actionToken) })
+                    IncomingCallContent(contact, rememberPhoto(app.chatHistory, call.peer),
+                        { openApp(call.actionToken, accept = true) }, { app.ringing.decline(call.actionToken) }, microphoneRefused)
                 } else {
                     LockedScreen(lock == LockState.Locked, canStop = false, callActive = false,
                         incomingCall = true, onDecline = { app.ringing.decline(call.actionToken) },
@@ -93,6 +107,11 @@ class IncomingCallActivity : ComponentActivity() {
     private fun completeOpen(expected: String, accept: Boolean) {
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) ||
             app.ringing.incoming.value?.actionToken != expected || token != expected) return
+        if (accept && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            awaitingMicrophone = expected
+            microphone.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
         if (accept && app.appLock.state.value in setOf(LockState.Disabled, LockState.Unlocked)) {
             app.ringing.accept(expected)
         }

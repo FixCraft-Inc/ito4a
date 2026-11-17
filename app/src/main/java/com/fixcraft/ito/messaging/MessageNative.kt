@@ -78,6 +78,9 @@ object MessageNative {
 
     const val IN_PERSON = 1
     const val LINK = 2
+    // PairedContact.verifiedBy, as ITO_VERIFIED_* in ito/message.h.
+    const val VERIFIED_IN_PERSON = 1
+    const val VERIFIED_SAFETY_CODE = 2
     const val SCANNED = 1
     const val FROM_LINK = 2
     const val OWNER = 1

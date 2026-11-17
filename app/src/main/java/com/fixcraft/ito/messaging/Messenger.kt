@@ -149,6 +149,7 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
             state.actions.forEach { it.close() }; state.actions.clear()
             state.removed = true
         }
+        history.setPhoto(peer, null)
         publish()
     }
 
@@ -363,8 +364,9 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
     private fun publish(clearCode: Boolean = false, failure: MessengerFailure = mutableState.value.failure) {
         val current = mutableState.value
         val pairings = if (book.state.value is BookState.Ready) book.withStore { MessageNative.pairings(it).toList() } else emptyList()
+        // Digits to compare mean nothing once no pairing is pending, so they leave with the last one.
         mutableState.value = MessengerState(current.revision + 1, client != null, failure, pairings,
-            if (clearCode) null else current.code, current.shortCode, current.link)
+            if (clearCode) null else current.code, if (pairings.isEmpty()) "" else current.shortCode, current.link)
         book.open()
     }
     private fun failed(failure: Exception) {

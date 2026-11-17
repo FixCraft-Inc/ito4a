@@ -84,6 +84,8 @@ class RingingLiveTest {
     @Test fun authenticatedRingsAcceptDeclineCorrelateAndRespectBackgroundOptIn() {
         check(InstrumentationRegistry.getArguments().getString("m5bLive") == "true")
         check(fixture.isDirectory)
+        // Answer asks for the microphone first. Granting it here keeps this journey on the call path.
+        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, android.Manifest.permission.RECORD_AUDIO)
         await("connection initialized") { app.connections.state.value.phase != ConnectionPhase.Loading }
         runBlocking { app.connections.stop().join() }
         app.callBook.open()
@@ -225,6 +227,7 @@ class RingingLiveTest {
                 app.calls.view.value.phase == CallPhase.Media && app.calls.view.value.peerAuthenticated &&
                     CallNative.callStatus(accepted.handle).has(CallNative.FLAG_PEER_AUTHENTICATED)
             }
+            assertTrue("Answer starts the call's foreground owner without a second action", app.foregroundAudio.value)
             accepted.close()
             await("accepted call ends and saves history") { app.calls.view.value.phase == CallPhase.Ended && app.calls.view.value.historySaved }
             compose.runOnIdle { app.calls.dismiss() }

@@ -2,8 +2,11 @@
 
 ## Application owners
 
-The Android app uses Kotlin, Jetpack Compose and Material 3. Its screens read
-a lifecycle-aware ViewModel. Preferences are serialized into a single
+The Android app uses Kotlin, Jetpack Compose and Material 3, with one light-blue
+palette on every Android version and Material Symbols icons. Its screens read
+a lifecycle-aware ViewModel. Chats, profiles and calls open full screen above
+the Chats, Service and Settings tabs, and saved navigation holds only route
+names and public contact codes. Preferences are serialized into a single
 DataStore entry and updated transactionally. They contain routing/audio
 choices and at most eight named HTTPS service origins. Credentials, paths,
 queries and fragments are refused in those origins. An origin is a saved
@@ -93,7 +96,8 @@ codes get an explanation. Safety QR text binds both complete composite
 fingerprints and all 60 safety digits using the closed grammar
 `ito-safety:1:<64 lowercase hex>:<64 lowercase hex>:<60 digits>`.
 A matching scan still requires user confirmation. A dashed portrait ring means
-unverified, a solid ring verified. Unverified contacts offer comparison in
+unverified, a solid ring verified. A portrait shows the photo chosen on this
+phone, or initials. Unverified contacts offer comparison in
 place of the message composer. Identity-1 contacts offer Pair again.
 
 Mailbox traffic uses only the currently authenticated shared relay. The app

@@ -4,6 +4,11 @@ Ito's original application and JNI adapter use AGPL-3.0-or-later, copyright
 2026 FixCraft Inc. [LICENSE](LICENSE) contains the complete terms.
 Third-party code retains its respective grants and attributions.
 
+Interface icons are Google's Material Symbols (Rounded) under Apache-2.0,
+copied as vector drawables from `google/material-design-icons` at commit
+`10ecc147`. Each drawable names its symbol in a comment. Every build packages
+`Apache-2.0.txt` for them.
+
 Every built APK carries complete selected texts under `assets/notices/`, and
 Settings shows them under Licenses with the source addresses.
 Its `manifest.json` records the actual resolved runtime coordinates and
