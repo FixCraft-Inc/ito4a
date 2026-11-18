@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.dp
 // purple shows through a default. surfaceContainerHighest stays distinct from
 // surfaceVariant: Material picks the muted onSurfaceVariant for any container
 // equal to surfaceVariant, which makes ordinary text look disabled.
-private val light = lightColorScheme(
+internal val lightScheme = lightColorScheme(
     primary = Color(0xFF2C6A9E), onPrimary = Color.White,
     primaryContainer = Color(0xFFD3E7F8), onPrimaryContainer = Color(0xFF0A2A44),
     inversePrimary = Color(0xFF9DCBF5),
@@ -39,7 +39,7 @@ private val light = lightColorScheme(
     surfaceContainer = Color(0xFFEBF0F5), surfaceContainerHigh = Color(0xFFE5EAEF),
     surfaceContainerHighest = Color(0xFFDFE5EB),
 )
-private val dark = darkColorScheme(
+internal val darkScheme = darkColorScheme(
     primary = Color(0xFF9DCBF5), onPrimary = Color(0xFF003354),
     primaryContainer = Color(0xFF134A72), onPrimaryContainer = Color(0xFFD3E7F8),
     inversePrimary = Color(0xFF2C6A9E),
@@ -62,24 +62,31 @@ private val dark = darkColorScheme(
 /**
  * Colours Material has no role for: answer and hang-up, read ticks and the
  * chat background. Answer and hang-up keep the same hue in both themes, so
- * the two call buttons are recognised before their labels are read.
+ * the two call buttons are recognised before their labels are read. Every
+ * background here comes with its own ink: Material's contentColorFor knows
+ * only scheme roles, so a surface in one of these colours would otherwise
+ * inherit whatever ink surrounds it, black in a dark chat.
  */
 @Immutable
 data class ItoColors(
     val answer: Color, val onAnswer: Color,
     val hangUp: Color, val onHangUp: Color,
     val read: Color, val chatBackground: Color,
-    /** Incoming bubbles and timeline notes, raised clearly off [chatBackground] in both themes. */
-    val incomingBubble: Color,
+    /** Incoming bubbles and call entries, raised clearly off [chatBackground] in both themes. */
+    val incomingBubble: Color, val onIncomingBubble: Color,
+    /** Day labels and notices such as a timer change, which read as part of the chat, not as anyone's words. */
+    val chatNote: Color, val onChatNote: Color,
     val callBackground: Color, val callBackgroundEnd: Color, val onCallBackground: Color, val callControl: Color,
     /** Background and initials colour pairs for portraits without a photo, all in the cool range. */
     val avatarTints: List<Pair<Color, Color>>,
 )
 
-private val lightExtras = ItoColors(
+internal val lightExtras = ItoColors(
     answer = Color(0xFF1E8E4E), onAnswer = Color.White,
     hangUp = Color(0xFFD32F2F), onHangUp = Color.White,
-    read = Color(0xFF2C6A9E), chatBackground = Color(0xFFE8F1F8), incomingBubble = Color.White,
+    read = Color(0xFF2C6A9E), chatBackground = Color(0xFFE8F1F8),
+    incomingBubble = Color.White, onIncomingBubble = Color(0xFF171C21),
+    chatNote = Color(0xE6DFE5EB), onChatNote = Color(0xFF171C21),
     callBackground = Color(0xFF14456B), callBackgroundEnd = Color(0xFF0B2A44), onCallBackground = Color.White, callControl = Color(0x33FFFFFF),
     avatarTints = listOf(
         Color(0xFFD3E7F8) to Color(0xFF0A2A44), Color(0xFFCDEEF0) to Color(0xFF00363A),
@@ -87,10 +94,12 @@ private val lightExtras = ItoColors(
         Color(0xFFD4EFE4) to Color(0xFF0B2E22), Color(0xFFE6E0F5) to Color(0xFF24193F),
     ),
 )
-private val darkExtras = ItoColors(
+internal val darkExtras = ItoColors(
     answer = Color(0xFF2EA862), onAnswer = Color.White,
     hangUp = Color(0xFFE5484D), onHangUp = Color.White,
-    read = Color(0xFF9DCBF5), chatBackground = Color(0xFF0B1015), incomingBubble = Color(0xFF212A33),
+    read = Color(0xFF9DCBF5), chatBackground = Color(0xFF0B1015),
+    incomingBubble = Color(0xFF212A33), onIncomingBubble = Color(0xFFDEE3E9),
+    chatNote = Color(0xE630353B), onChatNote = Color(0xFFDEE3E9),
     callBackground = Color(0xFF0F2F4A), callBackgroundEnd = Color(0xFF07182A), onCallBackground = Color.White, callControl = Color(0x2EFFFFFF),
     avatarTints = listOf(
         Color(0xFF134A72) to Color(0xFFD3E7F8), Color(0xFF124E52) to Color(0xFFCDEEF0),
@@ -123,6 +132,6 @@ private val typography = Typography().let { base ->
 fun ItoTheme(content: @Composable () -> Unit) {
     val night = isSystemInDarkTheme()
     androidx.compose.runtime.CompositionLocalProvider(LocalItoColors provides if (night) darkExtras else lightExtras) {
-        MaterialTheme(colorScheme = if (night) dark else light, shapes = shapes, typography = typography, content = content)
+        MaterialTheme(colorScheme = if (night) darkScheme else lightScheme, shapes = shapes, typography = typography, content = content)
     }
 }

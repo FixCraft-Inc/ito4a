@@ -217,6 +217,14 @@
     <string name="call_needs_connection">Connect on the Service tab to call.</string>
     <string name="call_not_started">Call not started</string>
     <string name="transport_not_set_up">Not set up</string>
+    <string name="chats_reconnecting">Reconnecting…</string>
+    <string name="chats_waiting_network">Waiting for network…</string>
+    <string name="chats_not_set_up">Set up a connection</string>
+    <string name="chats_no_mailbox">Messaging isn’t available on this server</string>
+    <string name="chats_unavailable">Messaging stopped. Reconnect to try again.</string>
+    <string name="chats_open_service">Open Service</string>
+    <string name="chat_pair_needs_connection">Pairing starts once Ito is connected.</string>
+    <string name="chat_pair_creating">Preparing your code…</string>
     <string name="settings_privacy">Privacy</string>
     <string name="settings_display">Display</string>
     <string name="app_lock_requirements">Needs Android 11 or later and a screen lock. If Android loses the lock key, Ito keeps your data locked and never replaces your identity.</string>
@@ -243,7 +251,6 @@
     <string name="chat_pair_qr">One-time pairing code</string>
     <string name="chat_share_link">Share pairing link</string>
     <string name="chat_hide_code">Hide code</string>
-    <string name="chat_mailbox_required">Messaging needs a selected service with an Ito mailbox. Open Service to connect or choose one.</string>
     <string name="chat_empty">Add someone you know, in person or with a pairing link. Your identity and chats stay on this phone.</string>
     <string name="chat_safety_match">Compare with %1$s</string>
     <string name="chat_matches">Matches</string>
@@ -281,7 +288,7 @@
     <string name="chat_timer_day">One day</string>
     <string name="chat_timer_week">One week</string>
     <string name="chat_timer_month">30 days</string>
-    <string name="chat_error_offline">Connect to your mailbox before pairing. You can queue messages for an established chat while offline.</string>
+    <string name="chat_error_offline">Ito isn’t connected right now. Try again once it is. Messages to a paired contact wait on this phone until then.</string>
     <string name="chat_error_storage">Saved message state could not be read or committed. No unreadable file was replaced.</string>
     <string name="chat_error_pair_again">This contact needs a new pairing. Names and history stay on this phone.</string>
     <string name="chat_error_code">This code is invalid, expired or unsupported. Scan a current Ito pairing or safety code.</string>
@@ -313,7 +320,11 @@
     <string name="open_app">Open Ito</string>
     <string name="call_ringing">Ringing…</string>
     <string name="messaging_background">Get messages and calls while Ito is closed</string>
-    <string name="messaging_background_description">Keeps a connection and a notification open. Uses battery, and Android may still pause it.</string>
+    <string name="messaging_background_description">Keeps one connection and a notification open, also after a restart. Uses battery, and some phones may still pause it.</string>
+    <string name="messaging_paused">Ito stopped listening for messages and calls. Open Ito to resume.</string>
+    <string name="messaging_paused_locked">Unlock Ito to receive messages and calls again.</string>
+    <string name="background_use">Let Ito run in the background</string>
+    <string name="background_use_description">Android is limiting Ito’s battery use, so messages and calls may arrive late or not at all.</string>
     <string name="messaging_text">Show message text in notifications</string>
     <string name="messaging_text_description">Names and text stay hidden while Ito is locked.</string>
     <string name="messaging_permission_required">Allow notifications and enable the connection, message and incoming-call channels in Android settings first.</string>

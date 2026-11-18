@@ -63,6 +63,48 @@ class MailboxClientTest {
             try { c.open(listOf(ByteArray(32))); fail() } catch (failure: MailboxFailure) { assertEquals(6, failure.status) }
         }
     }
+    /** The background keep-alive asks for a PING before the interval, and learns when it was answered. */
+    @Test fun aRequestedPingGoesOutOnTheNextPollAndSettlesOnItsPong() {
+        val writes = mutableListOf<ByteArray>()
+        var now = 0L
+        val replies = ArrayDeque<Byte>()
+        MailboxClient({ size, _ -> if (replies.isEmpty()) null else ByteArray(minOf(size, replies.size)) { replies.removeFirst() } },
+            { writes.add(it.copyOf()) }, { true }, { now }).use { c ->
+            frame(11, byteArrayOf()).forEach(replies::add)
+            assertNull(c.poll())
+            assertEquals(1, writes.size)
+            now += 1_000_000_000L
+            assertNull(c.poll())
+            assertEquals("No PING before the interval", 1, writes.size)
+            c.pingSoon()
+            assertTrue(c.pingPending)
+            frame(11, byteArrayOf()).forEach(replies::add)
+            assertNull(c.poll())
+            assertEquals(2, writes.size)
+            assertArrayEquals(frame(10, byteArrayOf()), writes.last())
+            assertFalse(c.pingPending)
+        }
+    }
+
+    /** A phone's clock that counts sleep makes the first turn after a long sleep send the overdue PING. */
+    @Test fun aPingFallsDueByTheInjectedClock() {
+        val writes = mutableListOf<ByteArray>()
+        var now = 0L
+        val replies = ArrayDeque<Byte>()
+        MailboxClient({ size, _ -> if (replies.isEmpty()) null else ByteArray(minOf(size, replies.size)) { replies.removeFirst() } },
+            { writes.add(it.copyOf()) }, { true }, { now }).use { c ->
+            frame(11, byteArrayOf()).forEach(replies::add)
+            c.poll()
+            now += MailboxClient.PING_INTERVAL_NANOS - 1
+            c.poll()
+            assertEquals(1, writes.size)
+            now += 1
+            frame(11, byteArrayOf()).forEach(replies::add)
+            c.poll()
+            assertEquals(2, writes.size)
+        }
+    }
+
     @Test fun aPartialFrameHasOneDeadlineEvenWhenReadsKeepTimingOut() {
         var ticks = 0L
         var sent = false

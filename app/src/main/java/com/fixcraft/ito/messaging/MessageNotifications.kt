@@ -83,6 +83,19 @@ class MessageNotifications(private val app: ItoApplication) {
         manager.notify(MESSAGE_NOTIFICATION, builder.build())
     }
 
+    /**
+     * Background reachability stopped and could not resume by itself, after a
+     * reboot with app lock on or when Android refused a restart. Opening Ito
+     * resumes it. The notice names no contact.
+     */
+    @Synchronized fun reachabilityPaused(locked: Boolean) {
+        if (!allowed()) return
+        manager.notify(PAUSED_NOTIFICATION, base(READY, if (locked) R.string.messaging_paused_locked else R.string.messaging_paused,
+            R.drawable.ic_hub, R.string.messaging_service_title).setAutoCancel(true).build())
+    }
+
+    @Synchronized fun reachabilityResumed() = manager.cancel(PAUSED_NOTIFICATION)
+
     @Synchronized fun sealedActivity() {
         if (app.appLock.isForeground() || !allowed()) return
         manager.notify(MESSAGE_NOTIFICATION, base(READY, R.string.messaging_unlock_activity).setOnlyAlertOnce(true).setAutoCancel(true).build())
@@ -141,5 +154,6 @@ class MessageNotifications(private val app: ItoApplication) {
         private const val MESSAGE_NOTIFICATION = 21
         private const val CALL_NOTIFICATION = 22
         private const val MISSED_NOTIFICATION = 23
+        private const val PAUSED_NOTIFICATION = 24
     }
 }

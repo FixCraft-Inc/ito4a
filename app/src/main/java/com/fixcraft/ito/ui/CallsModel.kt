@@ -41,13 +41,27 @@ class CallsModel(application: Application) : AndroidViewModel(application) {
         catch (_: Exception) { mutableNotice.value = R.string.contact_change_failed }
     } }
 
+    private val gate = ActionGate()
+    /** Keys from [Actions] whose operation still runs. Their controls show progress and ignore taps. */
+    val busy = gate.busy
+
     fun dismissNotice() { mutableNotice.value = null }
-    fun message(onSuccess: () -> Unit = {}, onFinished: () -> Unit = {}, action: com.fixcraft.ito.messaging.Messenger.() -> Unit) {
+
+    /**
+     * Runs [action] on the process's Messenger. With a [key], a repeated tap
+     * while that action runs is dropped rather than queued behind it.
+     */
+    fun message(key: String? = null, onSuccess: () -> Unit = {}, onFinished: () -> Unit = {},
+                action: com.fixcraft.ito.messaging.Messenger.() -> Unit) {
+        if (key != null && !gate.admit(key)) return
         viewModelScope.launch(Dispatchers.IO) {
             try { app.messenger.action(); withContext(Dispatchers.Main) { onSuccess() } }
             catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
             catch (_: Exception) { /* Messenger publishes a typed, content-free refusal. */ }
-            finally { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { onFinished() } }
+            finally {
+                key?.let(gate::release)
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { onFinished() }
+            }
         }
     }
     fun rename(key: ByteArray, name: String) { viewModelScope.launch { change { rename(key, name) } } }

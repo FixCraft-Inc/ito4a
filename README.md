@@ -38,7 +38,8 @@ audio once the call connects. The [audio adapter](docs/VOICE.md) supplies mono
 Opus capture/playback, the choice of phone, speaker, headset or Bluetooth, and
 a foreground call service that keeps a minimized call running. Settings can keep the selected
 mailbox connection open while Ito is closed, with a permanent notification.
-This is off by default. App lock delays authentication of newly arrived rings
+It comes back after a reboot or an update and keeps the connection alive while
+the phone sleeps. This is off by default. App lock delays authentication of newly arrived rings
 until unlock. [Android messaging lifecycle](docs/MESSAGING_LIFECYCLE.md)
 describes notification privacy, deadlines and interruption limits. Physical
 audio, battery/Doze and signed release qualification remain separate. Push is

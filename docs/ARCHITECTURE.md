@@ -81,14 +81,22 @@ build, JNI, cancellation, secret and recovery contracts.
 ## Chats, pairing and calls
 
 Chats is the main destination. `CallsModel` sends book and messenger operations
-to I/O and exposes typed refusals through resource strings. `Messenger` owns
+to I/O and exposes typed refusals through resource strings. Its `ActionGate`
+admits one running operation per action, such as Show my code or one
+pairing's decision. A repeated tap while it runs shows progress and is
+dropped, never queued, and other actions never wait for it. A connection that
+is starting or retrying reads as such on Chats, not as a refusal. Only a
+person's own operation produces a refusal notice. A mailbox stream the
+connection retries by itself does not. `Messenger` owns
 identity-2 upgrade, pairing and one native message session per paired contact.
 `ChatRepository` owns per-contact history/session encryption, pending sends,
 receipts, settings and migration from the old content snapshot. The portable
 core owns every message key, trust transition, encoding and replay decision.
 [Local content](LOCAL_CONTENT.md) states publication and retention guarantees.
 
-An in-person pairing code appears on a secure window. Both people compare the
+An in-person pairing code appears on a secure window. While a code of the same
+kind is shown and unanswered, asking again keeps it rather than creating
+another pairing. An answered code leaves the screen. Both people compare the
 six-digit code before the owner confirms. A shared link remains unverified
 until full safety-code comparison. The one scanner dispatches pairing and safety codes and explains legacy
 call invitations and contact text. Unknown text and legacy contact

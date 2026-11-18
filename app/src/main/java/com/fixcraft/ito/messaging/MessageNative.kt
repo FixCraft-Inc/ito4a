@@ -85,6 +85,8 @@ object MessageNative {
     const val FROM_LINK = 2
     const val OWNER = 1
     const val SCANNER = 2
+    // PairingState.state, as ITO_PAIRING_STATE_* in ito/message.h. OPEN: issued, nobody answered yet.
+    const val PAIRING_OPEN = 1
     const val REPLIED = 1
     const val PAIRED = 2
     const val CONFIRMED = 3

@@ -54,6 +54,13 @@ class ItoApplication : Application() {
 
     fun backgroundActive(active: Boolean) { backgroundOwner.value = active; connections.background(active) }
 
+    /**
+     * The reachability service started, maybe after boot with no screen shown.
+     * App lock otherwise begins in the foreground state, which would hide every
+     * notification as if Ito were on screen.
+     */
+    fun serviceStarted() { if (visibleActivities.isEmpty()) appLock.background() }
+
     private fun foreground(active: Boolean) {
         visible.value = active
         if (!active) notifications.redact()
@@ -126,7 +133,7 @@ class ItoApplication : Application() {
     val connections: ConnectionController by lazy {
         ConnectionController(this, services = transportServices(services), requireAccess = appLock::requireAccess,
             mailbox = MailboxLane("ito-mailbox", failed = messenger::transportFailed,
-                stopped = messenger::suspendAccess) { stream, fingerprint, active ->
+                stopped = messenger::suspendAccess, starting = messenger::transportStarting) { stream, fingerprint, active ->
                 messenger.initialize()
                 messenger.run(stream, fingerprint, "ito-mailbox", active)
             })

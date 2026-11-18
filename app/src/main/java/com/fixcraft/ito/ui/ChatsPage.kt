@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Badge
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,6 +39,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -105,7 +108,7 @@ internal fun ChatsPage(model: CallsModel, onRoute: (ChatsRoute) -> Unit, onServi
 /** A full-screen page of the Chats tab. Unknown contact codes return to the list. */
 @Composable
 internal fun ChatsDetail(model: CallsModel, route: ChatsRoute, onRoute: (ChatsRoute) -> Unit, advanced: Boolean,
-                         chrome: ScreenChrome) {
+                         chrome: ScreenChrome, onService: () -> Unit) {
     val book by model.book.collectAsStateWithLifecycle()
     val ready = book as? BookState.Ready
     if (ready?.identity == null) {
@@ -116,7 +119,7 @@ internal fun ChatsDetail(model: CallsModel, route: ChatsRoute, onRoute: (ChatsRo
     fun contact(code: String) = ready.contacts.firstOrNull { it.code == code }
     when (route) {
         ChatsRoute.Home -> Unit
-        ChatsRoute.AddContact -> AddContactScreen(model, chrome, onRoute)
+        ChatsRoute.AddContact -> AddContactScreen(model, chrome, onRoute, onService)
         is ChatsRoute.Scan -> ScanScreen(model, ready.contacts, chrome, onBack = { onRoute(route.parent) })
         is ChatsRoute.Chat -> contact(route.code)?.let { ChatScreen(model, it, chrome, onRoute) }
             ?: LaunchedEffect(route) { onRoute(ChatsRoute.Home) }
@@ -128,6 +131,7 @@ internal fun ChatsDetail(model: CallsModel, route: ChatsRoute, onRoute: (ChatsRo
 @Composable
 private fun ChatList(model: CallsModel, contacts: List<Contact>, onRoute: (ChatsRoute) -> Unit, onService: () -> Unit) {
     val messenger by model.messenger.state.collectAsStateWithLifecycle()
+    val connection by model.connection.collectAsStateWithLifecycle()
     val summaries by produceState<Map<String, ChatSummary?>>(emptyMap(), messenger.revision, contacts) {
         value = withContext(Dispatchers.IO) {
             contacts.associate { contact ->
@@ -144,7 +148,7 @@ private fun ChatList(model: CallsModel, contacts: List<Contact>, onRoute: (Chats
     }
     val shown = contacts.filter { summaries[it.code]?.removed != true }.sortedByDescending { summaries[it.code]?.time ?: 0 }
     Box(Modifier.fillMaxSize()) {
-        if (shown.isEmpty() && messenger.pairings.isEmpty()) EmptyChats(messenger.online, onService)
+        if (shown.isEmpty() && messenger.pairings.isEmpty()) EmptyChats(chatsReach(connection, messenger.online, messenger.stopped), onService)
         else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
             item { Box(Modifier.padding(horizontal = 16.dp)) { PairingProgress(model) } }
             items(shown, key = { it.code }) { contact ->
@@ -172,7 +176,7 @@ internal fun AddContactButton(modifier: Modifier = Modifier, onClick: () -> Unit
 }
 
 @Composable
-private fun EmptyChats(online: Boolean, onService: () -> Unit) {
+private fun EmptyChats(reach: ChatsReach, onService: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Icon(painterResource(R.drawable.ic_ito), null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
@@ -180,9 +184,24 @@ private fun EmptyChats(online: Boolean, onService: () -> Unit) {
             textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
         Text(stringResource(R.string.chat_empty), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.widthIn(max = 360.dp))
-        if (!online) Text(stringResource(R.string.chat_mailbox_required), style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.widthIn(max = 360.dp).clickable(role = Role.Button, onClick = onService).padding(8.dp))
+        if (reach != ChatsReach.Online) ReachLine(reach, onService)
+    }
+}
+
+/**
+ * Why chats cannot reach the mailbox yet, with a spinner while Ito is working
+ * on it. Tapping opens the Service tab, where the connection's details are.
+ */
+@Composable
+internal fun ReachLine(reach: ChatsReach, onService: () -> Unit, modifier: Modifier = Modifier) {
+    val label = stringResource(reach.label)
+    Row(modifier.widthIn(max = 360.dp).clickable(role = Role.Button, onClickLabel = stringResource(R.string.chats_open_service),
+        onClick = onService).padding(8.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)) {
+        if (reach.working) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        else Icon(painterResource(R.drawable.ic_offline), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
     }
 }
 

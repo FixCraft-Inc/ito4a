@@ -234,7 +234,8 @@ private fun Timeline(data: ChatDisplay, modifier: Modifier, onSelect: (ChatBubbl
     val entries = remember(data, today, yesterday) { timeline(data, today, yesterday) }
     if (entries.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.ito.incomingBubble) {
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.ito.incomingBubble,
+                contentColor = MaterialTheme.ito.onIncomingBubble) {
                 Text(stringResource(R.string.chat_no_messages), Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
                     style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
             }
@@ -291,10 +292,15 @@ private fun sameDay(first: Long, second: Long): Boolean {
 @Composable
 private fun DayChip(label: String) {
     Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.9f)) {
-            Text(label, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).semantics { heading() },
-                style = MaterialTheme.typography.labelMedium)
-        }
+        ChatNote(label, Modifier.semantics { heading() })
+    }
+}
+
+/** A small centred note on the chat background: a day label or a notice such as a timer change. */
+@Composable
+private fun ChatNote(text: String, modifier: Modifier = Modifier) {
+    Surface(shape = CircleShape, color = MaterialTheme.ito.chatNote, contentColor = MaterialTheme.ito.onChatNote) {
+        Text(text, modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -305,11 +311,7 @@ private fun MessageRow(bubble: ChatBubble, groupEnd: Boolean, readShown: Boolean
     if (bubble.kind == MessageNative.TIMER || bubble.kind == MessageNative.PROFILE) {
         val text = if (bubble.kind == MessageNative.TIMER) stringResource(R.string.chat_timer_changed, stringResource(timerLabel(bubble.timer)))
             else stringResource(R.string.chat_name_hint, bubble.text)
-        Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.9f)) {
-                Text(text, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
-            }
-        }
+        Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) { ChatNote(text) }
         return
     }
     val colors = MaterialTheme.colorScheme
@@ -318,7 +320,7 @@ private fun MessageRow(bubble: ChatBubble, groupEnd: Boolean, readShown: Boolean
     val tail = if (groupEnd) 4.dp else large
     val shape = if (outgoing) RoundedCornerShape(large, large, tail, large) else RoundedCornerShape(large, large, large, tail)
     val container = if (outgoing) colors.primaryContainer else MaterialTheme.ito.incomingBubble
-    val ink = if (outgoing) colors.onPrimaryContainer else colors.onSurface
+    val ink = if (outgoing) colors.onPrimaryContainer else MaterialTheme.ito.onIncomingBubble
     // A bubble wraps its text, up to most of the row, so the other side stays readable.
     BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = if (groupEnd) 6.dp else 0.dp),
         contentAlignment = if (outgoing) Alignment.CenterEnd else Alignment.CenterStart) {
@@ -353,7 +355,7 @@ private fun CallEntry(call: ChatCall) {
     }
     val connected = com.fixcraft.ito.content.LocalCall.ringEnd(call.result) == null && call.duration > 0
     Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-        Surface(shape = CircleShape, color = MaterialTheme.ito.incomingBubble) {
+        Surface(shape = CircleShape, color = MaterialTheme.ito.incomingBubble, contentColor = MaterialTheme.ito.onIncomingBubble) {
             Row(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(icon), null, Modifier.size(16.dp),
                     tint = if (missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)

@@ -2,7 +2,11 @@ package com.fixcraft.ito.ui
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import com.fixcraft.ito.messaging.MessageNative
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.DarkMode
@@ -38,14 +42,18 @@ class MessengerGalleryTest {
             "ab".repeat(32) + "/ito-mailbox", listOf(
                 ChatBubble(ByteArray(16) { 1 }, false, 1, "Are we still meeting at six?", now, now, 3, false, 0),
                 ChatBubble(ByteArray(16) { 2 }, true, 1, "Yes. I will call when I arrive.", now + 1000, now + 1000, 2, false, 0),
-                ChatBubble(ByteArray(16) { 3 }, false, 1, "This message waited while the phone was offline.", now - 5000, now + 3000, 3, true, 0)
-            ), listOf(ChatCall(now + 2000, 64_000L, 0, true), ChatCall(now + 4000, 0L, -1104, false)), 0,
+                ChatBubble(ByteArray(16) { 3 }, false, 1, "This message waited while the phone was offline.", now - 5000, now + 3000, 3, true, 0),
+                ChatBubble(ByteArray(16) { 4 }, true, MessageNative.TIMER, "", now + 5000, now + 5000, 2, false, 1)
+            ), listOf(ChatCall(now - 86_400_000L, 30_000L, 0, false), ChatCall(now + 2000, 64_000L, 0, true),
+                ChatCall(now + 4000, 0L, -1104, false)), 0,
             ChatSettings("Mina", true), true, now / 1000, 1)
         val chrome = ScreenChrome(SnackbarHostState()) {}
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(dark) then DeviceConfigurationOverride.FontScale(scale)) {
-                // Full-screen pages draw their own bars, as they do in the app.
-                ItoTheme { Surface(color = MaterialTheme.colorScheme.background) { key(screen, dark, scale) { screen() } } }
+                // Full-screen pages draw their own bars, as they do in the app. Only a
+                // background is drawn here: a Surface would supply ink the app never
+                // has, and hide text that inherits none, as dark chat notes once did.
+                ItoTheme { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { key(screen, dark, scale) { screen() } } }
             }
         }
         val capture = GalleryCapture(compose)
@@ -66,7 +74,7 @@ class MessengerGalleryTest {
             capture.frame("$profile-unverified", scroll = false)
             screen = { ContactProfileContent(model, unverified, data, false, {}) }
             capture.frame("$profile-unverified-profile")
-            screen = { AddContactScreen(model, chrome) {} }
+            screen = { AddContactScreen(model, chrome, {}) {} }
             // The pairing screen is a secure window, so its frame comes from Compose.
             capture.secureFrame("$profile-add-contact")
             screen = { ItoFrame("Settings", null, Page.Settings, SnackbarHostState(), {}) {

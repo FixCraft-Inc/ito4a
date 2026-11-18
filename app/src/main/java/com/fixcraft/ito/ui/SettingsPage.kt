@@ -1,6 +1,9 @@
 package com.fixcraft.ito.ui
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.os.PowerManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
@@ -21,6 +24,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -43,10 +52,16 @@ fun SettingsPage(preferences: Preferences, onPresentation: (Presentation) -> Uni
                  lockEnabled: Boolean = false, onLock: () -> Unit = {}, onLicenses: () -> Unit = {},
                  onBackground: (Boolean) -> Unit = {}, onNotificationText: (Boolean) -> Unit = {},
                  profile: @Composable () -> Unit = {}) {
+    val context = LocalContext.current
+    // Turning reachability on also asks Android to stop restricting Ito, once the switch holds.
+    var askUnrestricted by remember { mutableStateOf(false) }
+    LaunchedEffect(preferences.backgroundMessages, askUnrestricted) {
+        if (askUnrestricted && preferences.backgroundMessages) { askUnrestricted = false; requestUnrestricted(context) }
+    }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+        askUnrestricted = allowed
         onBackground(allowed)
     }
-    val context = LocalContext.current
     Column(Modifier.widthIn(max = 600.dp).fillMaxWidth().verticalScroll(rememberScrollState())
         .padding(horizontal = 24.dp, vertical = 8.dp)) {
         profile()
@@ -59,8 +74,9 @@ fun SettingsPage(preferences: Preferences, onPresentation: (Presentation) -> Uni
         SwitchRow(R.drawable.ic_notifications, R.string.messaging_background, R.string.messaging_background_description,
             preferences.backgroundMessages) { enabled ->
             if (enabled && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-            else onBackground(enabled)
+            else { askUnrestricted = enabled; onBackground(enabled) }
         }
+        if (preferences.backgroundMessages) BackgroundUseRow()
         SwitchRow(R.drawable.ic_chat, R.string.messaging_text, R.string.messaging_text_description, preferences.notificationText,
             onNotificationText)
         ListHeading(R.string.calls)
@@ -84,6 +100,43 @@ fun SettingsPage(preferences: Preferences, onPresentation: (Presentation) -> Uni
         SourceLink(R.string.about_core_source, CORE_SOURCE_URL)
         Text(stringResource(R.string.about_license), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp))
+    }
+}
+
+/**
+ * Shown while Android still restricts Ito's battery use. Restricted, a phone
+ * may delay the keep-alive and refuse to restart the connection, so messages
+ * and calls arrive late or not at all. Gone once Ito is unrestricted.
+ */
+@Composable
+private fun BackgroundUseRow() {
+    val context = LocalContext.current
+    var unrestricted by remember { mutableStateOf(isUnrestricted(context)) }
+    LifecycleResumeEffect(Unit) {
+        unrestricted = isUnrestricted(context)
+        onPauseOrDispose { }
+    }
+    if (unrestricted) return
+    ListRow(R.drawable.ic_alert, stringResource(R.string.background_use),
+        Modifier.clickable(role = Role.Button) { requestUnrestricted(context) },
+        supporting = stringResource(R.string.background_use_description), tint = MaterialTheme.colorScheme.error)
+}
+
+private fun isUnrestricted(context: Context) =
+    context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+
+/**
+ * Asks Android, in its own dialog, to stop restricting Ito. Ito has no push
+ * service to wake it, so the opt-in connection is its only way to be reached.
+ */
+@SuppressLint("BatteryLife")
+private fun requestUnrestricted(context: Context) {
+    if (isUnrestricted(context)) return
+    try {
+        context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, ("package:" + context.packageName).toUri()))
+    } catch (_: ActivityNotFoundException) {
+        try { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        catch (_: ActivityNotFoundException) { /* The row stays until Ito is unrestricted. */ }
     }
 }
 

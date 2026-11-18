@@ -10,7 +10,12 @@ internal class MailboxItem(val kind: Int, val address: ByteArray, val id: ByteAr
     override fun close() { address.fill(0); id.fill(0); sealed.fill(0) }
 }
 
-/** Exact MAILBOX/1 framing. One stream owner; no concurrent requests or reads. */
+/**
+ * Exact MAILBOX/1 framing. One stream owner; no concurrent requests or reads.
+ * [nanoTime] times the keep-alive and frame deadlines. A phone passes a clock
+ * that keeps counting while the device sleeps, so the first turn after a long
+ * sleep sends the PING that is overdue.
+ */
 internal class MailboxClient(private val read: (capacity: Int, timeout: Int) -> ByteArray?,
     private val write: (ByteArray) -> Unit, private val active: () -> Boolean,
     private val nanoTime: () -> Long = System::nanoTime) : AutoCloseable {
@@ -18,6 +23,13 @@ internal class MailboxClient(private val read: (capacity: Int, timeout: Int) -> 
     private var queuedBytes = 0
     private var pingAt = nanoTime()
     private var started = false
+    private var pingRequested = false
+
+    /** Sends a PING on the next [poll], before the interval is due. */
+    fun pingSoon() { pingRequested = true }
+
+    /** A requested PING has not been answered yet. */
+    val pingPending: Boolean get() = pingRequested
 
     fun open(secrets: List<ByteArray>) {
         require(secrets.size in 1..512 && secrets.all { it.size == 32 })
@@ -55,9 +67,9 @@ internal class MailboxClient(private val read: (capacity: Int, timeout: Int) -> 
         if (items.isNotEmpty()) return pop()
         // A new stream's first frame must meet the module's five-second budget,
         // including when this installation has no inbox to OPEN yet.
-        if (!started || nanoTime() - pingAt >= 240_000_000_000L) {
+        if (!started || pingRequested || nanoTime() - pingAt >= PING_INTERVAL_NANOS) {
             val pong = request(10, byteArrayOf(), 11)
-            try { checkFrame(pong.isEmpty()); pingAt = nanoTime() } finally { pong.fill(0) }
+            try { checkFrame(pong.isEmpty()); pingAt = nanoTime(); pingRequested = false } finally { pong.fill(0) }
             if (items.isNotEmpty()) return pop()
         }
         val frame = frame(200) ?: return null
@@ -152,4 +164,9 @@ internal class MailboxClient(private val read: (capacity: Int, timeout: Int) -> 
 
     override fun close() { items.forEach(MailboxItem::close); items.clear(); queuedBytes = 0 }
     private fun checkFrame(ok: Boolean) { if (!ok) throw MailboxFailure(6) }
+
+    companion object {
+        /** MAILBOX's suggested idle PING, well inside the relay's ten-minute idle limit. */
+        const val PING_INTERVAL_NANOS = 240_000_000_000L
+    }
 }

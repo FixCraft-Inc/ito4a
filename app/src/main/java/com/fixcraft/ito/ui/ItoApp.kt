@@ -75,7 +75,6 @@ import com.fixcraft.ito.call.CallView
 import com.fixcraft.ito.domain.Preferences
 import com.fixcraft.ito.domain.Presentation
 import com.fixcraft.ito.domain.SavedService
-import com.fixcraft.ito.transport.ConnectionPhase
 import kotlinx.coroutines.delay
 import java.util.UUID
 
@@ -158,7 +157,7 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
         return
     }
     if (ready != null && page == Page.Calls && callsRoute != ChatsRoute.Home) {
-        ChatsDetail(calls, callsRoute, { callsRoute = it }, advanced, chrome)
+        ChatsDetail(calls, callsRoute, { callsRoute = it }, advanced, chrome, onService = { onPage(Page.Service) })
         return
     }
 
@@ -185,12 +184,8 @@ fun ItoApp(state: PreferencesState, notice: Int?, model: MainViewModel, calls: C
     val chatsHome = page == Page.Calls && ready != null && identity
     ItoFrame(title, closeSettings.takeIf { settingsOpen != SettingsRoute.Home }, page, snackbar, select,
         // Like a messenger's title bar: say when chats cannot reach the service, and open its tab on tap.
-        subtitle = when {
-            !chatsHome || messenger.online -> null
-            connectionState.phase == ConnectionPhase.Starting || connectionState.phase == ConnectionPhase.Connected ->
-                stringResource(R.string.transport_starting)
-            else -> stringResource(R.string.transport_idle)
-        },
+        subtitle = if (!chatsHome) null else chatsReach(connectionState, messenger.online, messenger.stopped)
+            .takeIf { it != ChatsReach.Online }?.let { stringResource(it.label) },
         onSubtitle = { onPage(Page.Service) },
         actions = {
             if (chatsHome) IconButton(onClick = { callsRoute = ChatsRoute.Scan() }) {
@@ -323,6 +318,9 @@ internal fun DetailScaffold(chrome: ScreenChrome, onBack: () -> Unit, title: @Co
         snackbarHost = { SnackbarHost(chrome.snackbar) },
         bottomBar = bottomBar,
         containerColor = containerColor,
+        // A custom container such as the chat background is no scheme role, so
+        // Material cannot pick its ink. Pages here sit on background-like colours.
+        contentColor = MaterialTheme.colorScheme.onBackground,
         content = content,
     )
 }

@@ -71,9 +71,12 @@ class CallLane(val service: String, val use: (stream: Long, fingerprint: ByteArr
 }
 
 class CallLaneUnavailable : Exception("no connected run")
-/** A run-owned mailbox worker; true asks for a bounded retry on this same endpoint. */
+/**
+ * A run-owned mailbox worker; true asks for a bounded retry on this same endpoint.
+ * [failed] reports a stream the run could not open and will not retry.
+ */
 class MailboxLane(val service: String, val failed: () -> Unit = {}, val stopped: () -> Unit = {},
-    val use: (stream: Long, fingerprint: ByteArray, authorityValid: () -> Boolean) -> Boolean)
+    val starting: () -> Unit = {}, val use: (stream: Long, fingerprint: ByteArray, authorityValid: () -> Boolean) -> Boolean)
 data class DataReceipt(val kind: String, val bytes: Int, val sha256: String, val peer: String, val generation: Long, val network: Long,
     val nativeBytesSent: Long, val nativeBytesReceived: Long)
 data class ConnectionState(
@@ -90,6 +93,10 @@ data class ConnectionState(
     val boundSockets: Int = 0,
     val receipts: List<DataReceipt> = emptyList(),
     val mailboxAvailable: Boolean = false,
+    /** Disconnect was chosen, so no automatic attempt runs until Connect. */
+    val paused: Boolean = false,
+    /** A manual configuration or a provider server is selected, so there is something to connect to. */
+    val configured: Boolean = false,
 )
 
 /** One process owns the store and every native handle. Activity recreation retains no secret. */
@@ -113,6 +120,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     private var paused = false
     private var automatic: Job? = null
     private var reconnectAttempt = 0
+    private var networkWatch: ConnectivityManager.NetworkCallback? = null
 
     private class Run(val generation: Long, val network: Network, val route: CapturedConnectionNetwork, val provider: String?) {
         val monitor = Any()
@@ -181,6 +189,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         if (provider == null || current?.provider != provider) stopRun()
         action()
         if (move && provider != null && current?.provider == provider) startRun()
+        else mutableState.value = mutableState.value.copy(configured = withContext(Dispatchers.IO) { hasRoute() })
     }
 
     fun selectNetwork(handle: Long?) = command {
@@ -280,18 +289,32 @@ class ConnectionController(context: Context, private val services: ConnectionSer
         } finally { code.fill(0) }
     }
 
-    fun connect(): Job { paused = false; automatic?.cancel(); automatic = null; return command { startRun() } }
+    /**
+     * Connects on the selected route. A second tap while a run is starting or
+     * connected leaves that run alone instead of stopping and restarting it.
+     */
+    fun connect(): Job {
+        setPaused(false); automatic?.cancel(); automatic = null
+        return command { if (current?.stopped?.get() != false) startRun() }
+    }
 
     /** Foreground messaging never changes the selected service, Network or VPN policy. */
     fun foreground(active: Boolean) {
         foreground = active
+        watchNetworks()
         scheduleConnection()
     }
 
     /** Set only while the explicit opt-in foreground service owns reachability. */
     fun background(active: Boolean) {
         background = active
+        watchNetworks()
         scheduleConnection()
+    }
+
+    private fun setPaused(value: Boolean) {
+        paused = value
+        mutableState.value = mutableState.value.copy(paused = value)
     }
 
     private fun scheduleConnection() {
@@ -304,12 +327,65 @@ class ConnectionController(context: Context, private val services: ConnectionSer
             automatic = null
             command {
                 if ((!foreground && !background) || paused) return@command
-                if (withContext(Dispatchers.IO) { store.list().selectedId == null && services?.selectedForRestart() == null }) return@command
+                // An unreadable provider selection fails this command visibly, as Connect would.
+                val configured = withContext(Dispatchers.IO) {
+                    store.list().selectedId != null || services?.selectedForRestart() != null
+                }
+                mutableState.value = mutableState.value.copy(configured = configured)
+                if (!configured) return@command
                 reconnectAttempt++
                 startRun()
             }
         }
     }
+
+    /**
+     * While Ito is visible or the background service runs, a network that
+     * appears or becomes usable ends the wait between automatic attempts. It
+     * never chooses a network: the next attempt captures the default one as
+     * Connect does. A failure that needs a person still waits for one.
+     */
+    private fun watchNetworks() {
+        val wanted = foreground || background
+        val watching = networkWatch
+        if (wanted == (watching != null)) return
+        if (!wanted) {
+            networkWatch = null
+            try { connectivity.unregisterNetworkCallback(requireNotNull(watching)) } catch (_: RuntimeException) {}
+            return
+        }
+        // Only a new default network or one that just passed validation counts.
+        // Signal-strength updates repeat VALIDATED and must not defeat the backoff.
+        val validated = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { scope.launch { networkReturned() } }
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                val now = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                val gained = if (now) validated.add(network.networkHandle) else { validated.remove(network.networkHandle); false }
+                if (gained) scope.launch { networkReturned() }
+            }
+            override fun onLost(network: Network) { validated.remove(network.networkHandle) }
+        }
+        try { connectivity.registerDefaultNetworkCallback(callback); networkWatch = callback }
+        catch (_: RuntimeException) { /* The backoff timer still retries. */ }
+    }
+
+    /** Retries a run that a network problem ended now, rather than after the rest of its backoff. */
+    private fun networkReturned() {
+        val state = mutableState.value
+        if (state.phase != ConnectionPhase.Failed || reconnectDelay(state.phase, state.failure, state.nativeCode, 0) == null) return
+        reconnectAttempt = 0
+        scheduleConnection()
+    }
+
+    /**
+     * Whether a route is selected, for display only: stored selection, never
+     * authority. An unreadable provider selection reads as none here and
+     * fails visibly when a run or the automatic attempt asks for it.
+     */
+    private fun hasRoute(catalog: ConfigurationCatalog = store.list()): Boolean = catalog.selectedId != null || try {
+        services?.selectedForRestart() != null
+    } catch (_: Exception) { false }
 
     /** Reconnects on a renewed lease, unless a later Connect or Stop replaced [previous]. */
     private fun reconnectRenewed(previous: Run, next: SelectedService) = command {
@@ -339,7 +415,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     }
 
     fun stop(pause: Boolean = true): Job {
-        if (pause) paused = true
+        if (pause) setPaused(true)
         automatic?.cancel(); automatic = null
         val wasStarting = mutableState.value.phase == ConnectionPhase.Starting
         importSignal?.cancel()
@@ -463,7 +539,10 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                                 }
                                 break
                             }
-                            delay(100)
+                            // Each check reads the Keystore and the record directory. A
+                            // second bounds how long a revoked or expired lease keeps
+                            // serving without waking the device ten times a second.
+                            delay(1000)
                         }
                     }
                 } else {
@@ -516,6 +595,7 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                 val messaging = mailbox?.takeIf { it.service in description.streams }
                 publish(run) { it.copy(mailboxAvailable = messaging != null) }
                 if (messaging != null) mailboxJob = scope.launch(Dispatchers.IO) {
+                    messaging.starting()
                     var retry = 0
                     while (!run.stopped.get()) {
                         val again = try {
@@ -526,8 +606,11 @@ class ConnectionController(context: Context, private val services: ConnectionSer
                                 }
                             } finally { ItoNative.closeCallStream(stream) }
                         } catch (failure: NativeFailure) {
-                            if (!run.stopped.get()) messaging.failed()
-                            failure.code in setOf(-5, -12, -15)
+                            // A stream this loop retries is no failure to report, but one it gives up on is.
+                            // NOT_FOUND here means an undeclared service, not an unreachable server.
+                            val transient = failure.code in setOf(-5, -12, -15)
+                            if (!transient && !run.stopped.get()) messaging.failed()
+                            transient
                         }
                         if (!again || run.stopped.get()) break
                         delay(minOf(30_000L, 1000L shl retry.coerceAtMost(5))); retry++
@@ -693,13 +776,13 @@ class ConnectionController(context: Context, private val services: ConnectionSer
     }
 
     private suspend fun reload() {
-        val catalog = withContext(Dispatchers.IO) { requireAccess(); store.list() }
+        val (catalog, configured) = withContext(Dispatchers.IO) { requireAccess(); store.list().let { it to hasRoute(it) } }
         val networks = knownNetworks()
         val selectable = selectableConnectionNetworks(currentDefaultNetwork(), networks.map { (network, capabilities) ->
             describeNetwork(network, capabilities)
         }).map { it.handle }.toSet()
         mutableState.value = mutableState.value.copy(phase = ConnectionPhase.Idle, failure = ConnectionFailure.None, nativeCode = 0, providerCode = "", mailboxAvailable = false,
-            catalog = catalog, networks = networks.filter { it.first.networkHandle in selectable }.map { (network, capabilities) ->
+            catalog = catalog, configured = configured, networks = networks.filter { it.first.networkHandle in selectable }.map { (network, capabilities) ->
                 NetworkChoice(network.networkHandle, capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
                     !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
             })

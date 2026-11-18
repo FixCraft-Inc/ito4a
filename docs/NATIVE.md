@@ -69,10 +69,13 @@ DNS, and route checks run before DNS, native start and each socket binding. Thos
 checks and callbacks observe Android's changes; they are not an atomic lock on
 system routing. A replacement run reacquires the same selected service and applies these
 network rules again. Automatic retries admit only network unavailability,
-network loss, DNS failure and public YUME TIMEOUT, CLOSED or IO_ERROR, with
-exponential delays capped at 30 seconds. Authentication, authority, input and
+network loss, DNS failure and public YUME NOT_FOUND (a failed connect to the
+server), TIMEOUT, CLOSED or IO_ERROR, with exponential delays capped at 30
+seconds. A network that appears or passes
+validation ends the current wait. Authentication, authority, input and
 storage failures require intervention. Disconnect pauses automatic attempts
-for this process. Connect resumes them. Backgrounding stops ordinary runs
+for this process. Connect resumes them, and a Connect while a run is starting
+or connected keeps that run. Backgrounding stops ordinary runs
 unless an active audio or opt-in messaging foreground service retains the run.
 The owner resolves the selected server through that captured Network and binds
 every native socket through the `SocketBinder`. The callback retains its Java object until endpoint

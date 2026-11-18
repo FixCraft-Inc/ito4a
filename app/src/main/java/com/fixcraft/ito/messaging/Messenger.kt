@@ -17,9 +17,15 @@ import kotlin.concurrent.withLock
 
 enum class MessengerFailure { None, Offline, Storage, PairAgain, InvalidCode, OtherRelay, Unverified, Capacity, Transport, Native }
 class MessengerRefusal(val reason: MessengerFailure) : Exception(reason.name)
+/**
+ * [failure] answers the person's last operation and is shown once. [stopped]
+ * is not an answer to anyone: the mailbox worker gave up on this connection
+ * for a reason a retry cannot fix, so chats stay offline until it reconnects.
+ */
 class MessengerState(val revision: Long = 0, val online: Boolean = false,
     val failure: MessengerFailure = MessengerFailure.None, val pairings: List<PairingState> = emptyList(),
-    val code: ByteArray? = null, val shortCode: String = "", val link: Boolean = false)
+    val code: ByteArray? = null, val shortCode: String = "", val link: Boolean = false,
+    val stopped: Boolean = false)
 
 /**
  * Process owner of pairing and message sessions. Public operations run on I/O
@@ -46,6 +52,16 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
     private var migrated = false
     private var reopenInboxes = false
     private var flushAt = 0L
+    // Inbox reconciliation reads the store and a sealed file, so the idle loop
+    // repeats it only after something may have changed, or as a slow safety net.
+    @Volatile private var reconcileDue = true
+    private var reconcileAt = 0L
+    // The pairing whose code is on screen, so a repeated tap shows it again
+    // instead of creating another pairing.
+    private var displayed: ByteArray? = null
+    @Volatile private var keepAliveRequested = false
+    // Releases the keep-alive's hold on the CPU once its PING is answered.
+    private val keepAliveDone = java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
 
     fun initialize() = operation {
         book.open()
@@ -61,15 +77,27 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
         reopenInboxes = true; publish()
     }
 
+    /**
+     * Shows a one-time pairing code. While a code of the same kind is on screen
+     * and nobody has answered it, this keeps that code: a second pairing would
+     * only leave another waiting row. Hiding the code first makes a new one,
+     * for example a second link for someone else.
+     */
     fun createCode(link: Boolean): Unit = operation {
         val connection = client ?: throw MessengerRefusal(MessengerFailure.Offline)
         book.withStore { store ->
+            val shown = mutableState.value
+            val unanswered = displayed?.let { id -> MessageNative.pairings(store).any {
+                it.id.contentEquals(id) && it.role == MessageNative.OWNER && it.state == MessageNative.PAIRING_OPEN
+            } } == true
+            if (shown.code != null && shown.link == link && unanswered) return@withStore
             val name = history.settings().name.toByteArray(Charsets.UTF_8)
             try { MessageNative.createCode(store, if (link) MessageNative.LINK else MessageNative.IN_PERSON,
                 fingerprint, service, name, clock() / 1000).use { code ->
                 try { reconcile(connection, store) }
                 catch (error: Exception) { MessageNative.cancel(store, code.id); throw error }
-                mutableState.value.code?.fill(0)
+                clearCode()
+                displayed = code.id.copyOf()
                 mutableState.value = MessengerState(mutableState.value.revision + 1, true,
                     pairings = MessageNative.pairings(store).toList(), code = code.bytes.copyOf(), link = link)
             } } finally { name.fill(0) }
@@ -100,14 +128,14 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
         reopenInboxes = true; publish()
     }
     fun cancelPairing(id: ByteArray): Unit = operation {
-        book.withStore { MessageNative.cancel(it, id) }; mutableState.value.code?.fill(0); publish(clearCode = true)
+        book.withStore { MessageNative.cancel(it, id) }; clearCode(); publish(clearCode = true)
     }
-    fun hideCode() = access.withLock { mutableState.value.code?.fill(0); publish(clearCode = true) }
+    fun hideCode() = access.withLock { clearCode(); publish(clearCode = true) }
     fun dismissFailure() = access.withLock { publish(failure = MessengerFailure.None) }
 
-    fun paired(peer: ByteArray): PairedContact? = operation { book.withStore { MessageNative.contact(it, peer) } }
-    fun safety(peer: ByteArray): String = operation { book.withStore { MessageNative.safetyCode(it, peer) } }
-    fun ownFingerprint(): ByteArray = operation { book.withStore(MessageNative::fingerprint) }
+    fun paired(peer: ByteArray): PairedContact? = operation(changes = false) { book.withStore { MessageNative.contact(it, peer) } }
+    fun safety(peer: ByteArray): String = operation(changes = false) { book.withStore { MessageNative.safetyCode(it, peer) } }
+    fun ownFingerprint(): ByteArray = operation(changes = false) { book.withStore(MessageNative::fingerprint) }
     fun verify(peer: ByteArray, compared: String): Unit = operation {
         book.withStore { MessageNative.verify(it, peer, compared, clock() / 1000) }; reopenInboxes = true; publish()
     }
@@ -189,12 +217,31 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
     fun callFailed(): Unit = access.withLock {
         val old = mutableState.value
         mutableState.value = MessengerState(old.revision + 1, old.online, MessengerFailure.Native,
-            old.pairings, old.code, old.shortCode, old.link)
+            old.pairings, old.code, old.shortCode, old.link, old.stopped)
+    }
+
+    /**
+     * Asks the worker to PING on its next turn, whatever the interval says.
+     * The background keep-alive calls this while it holds the device awake,
+     * and [answered] runs once the PONG arrives. A connection that cannot
+     * answer never calls it, so the hold lasts until its own timeout.
+     */
+    fun keepAlive(answered: () -> Unit) {
+        // Request first: a PONG racing this call can then only hold the CPU
+        // until the timeout, never release it before the PING is sent.
+        keepAliveRequested = true
+        keepAliveDone.getAndSet(answered)?.invoke()
+    }
+
+    private fun keepAliveAnswered(connection: MailboxClient) {
+        if (!keepAliveRequested && !connection.pingPending) keepAliveDone.getAndSet(null)?.invoke()
     }
 
     /** Called by the connection's owned I/O worker; returns before that endpoint is destroyed. */
     fun run(stream: Long, authenticated: ByteArray, mailboxService: String, active: () -> Boolean): Boolean {
         var retry = false
+        var gaveUp = false
+        var ambiguous = false
         val sealed = java.util.ArrayDeque<MailboxItem>()
         var sealedBytes = 0
         var accessSuspended = false
@@ -206,31 +253,39 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
             onSealedActivity()
         }
         MailboxClient({ size, timeout -> MessageNative.read(stream, size, timeout) },
-            { MessageNative.write(stream, it, 5000) }, active).use { connection ->
+            { MessageNative.write(stream, it, 5000) }, active, android.os.SystemClock::elapsedRealtimeNanos).use { connection ->
             try {
                 access.withLock {
                     requireAccess(); check(client == null)
                     client = connection; fingerprint = authenticated.copyOf(); service = mailboxService
-                    flushAt = 0
-                    publish()
+                    flushAt = 0; reconcileDue = true
+                    publish(stopped = false)
                 }
                 while (active()) access.withLock {
+                    if (keepAliveRequested) { keepAliveRequested = false; connection.pingSoon() }
                     if (!hasAccess()) {
                         if (!accessSuspended) {
-                            closeConversations(); mutableState.value.code?.fill(0)
+                            closeConversations(); clearCode()
                             mutableState.value = MessengerState(mutableState.value.revision + 1)
                             accessSuspended = true
                         }
                         connection.poll()?.let(::retain)
+                        keepAliveAnswered(connection)
                         return@withLock
                     }
                     requireAccess()
+                    if (accessSuspended) reconcileDue = true
                     accessSuspended = false
-                    book.withStore { store -> reconcile(connection, store) }
+                    if (reconcileDue || System.nanoTime() >= reconcileAt) {
+                        reconcileDue = false
+                        book.withStore { store -> reconcile(connection, store) }
+                        reconcileAt = System.nanoTime() + RECONCILE_INTERVAL_NANOS
+                    }
                     // Idle network waits borrow no identity store. Call admission
                     // must be able to reach its native deadline on another lane.
                     val buffered = sealed.isNotEmpty()
                     val next = if (!buffered) connection.poll() else sealed.removeFirst().also { sealedBytes -= it.sealed.size }
+                    keepAliveAnswered(connection)
                     if (!hasAccess()) {
                         next?.let { item ->
                             if (buffered) { sealed.addFirst(item); sealedBytes += item.sealed.size }
@@ -242,7 +297,7 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
                         // Drain one pushed item before sending more. Request replies
                         // may interleave bounded pushed items inside MailboxClient.
                         var changed = false
-                        next?.let { received -> receive(connection, store, received); changed = true; flushAt = 0 }
+                        next?.let { received -> receive(connection, store, received); changed = true; flushAt = 0; reconcileDue = true }
                         if (System.nanoTime() >= flushAt) {
                             CallNative.contacts(store).filter { it.trust == CallNative.TRUST_VERIFIED }.forEach { contact ->
                                 val paired = MessageNative.contact(store, contact.key) ?: return@forEach
@@ -250,30 +305,46 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
                             }
                             flushAt = System.nanoTime() + 5_000_000_000L
                         }
-                        if (changed) publish()
+                        if (changed) { reconcileDue = true; publish() }
                     } } finally { next?.close() }
                 }
             } catch (failure: Exception) {
                 retry = (failure is MailboxFailure && failure.status in setOf(2, 3, 5)) || (failure is CallFailure && failure.code in setOf(-19, -25))
-                access.withLock { failed(failure) }
+                // The connection retries a dropped stream by itself, so a drop is
+                // nobody's failed operation. Only a fault a retry cannot fix stays visible.
+                gaveUp = !retry && active()
+                ambiguous = failure is CallFailure && failure.code == CallNative.STORAGE_AMBIGUOUS
             } finally {
                 access.withLock {
+                    if (ambiguous) book.publicationAmbiguous()
                     sealed.forEach(MailboxItem::close); sealed.clear()
                     client = null; fingerprint.fill(0); fingerprint = byteArrayOf(); service = ""
                     opened.values.forEach(Inbox::close); opened.clear(); closeConversations()
-                    mutableState.value.code?.fill(0)
-                    mutableState.value = MessengerState(mutableState.value.revision + 1)
+                    clearCode()
+                    mutableState.value = MessengerState(mutableState.value.revision + 1, stopped = gaveUp)
                 }
             }
         }
         return retry
     }
 
-    fun transportFailed(): Unit = access.withLock { publish(failure = MessengerFailure.Transport) }
+    /** A new connection run is about to open the mailbox, so an earlier run's give-up no longer applies. */
+    fun transportStarting(): Unit = access.withLock {
+        val old = mutableState.value
+        if (old.stopped) mutableState.value = MessengerState(old.revision + 1, old.online, old.failure, old.pairings, old.code,
+            old.shortCode, old.link, stopped = false)
+    }
+
+    /** The connection could not open the mailbox stream and will not retry it on this run. */
+    fun transportFailed(): Unit = access.withLock {
+        val old = mutableState.value
+        mutableState.value = MessengerState(old.revision + 1, old.online, old.failure, old.pairings, old.code,
+            old.shortCode, old.link, stopped = true)
+    }
 
     /** Background/lock release for sessions opened while offline. No new key access. */
     fun suspendAccess() = access.withLock {
-        closeConversations(); mutableState.value.code?.fill(0)
+        closeConversations(); clearCode()
         mutableState.value = MessengerState(mutableState.value.revision + 1)
     }
 
@@ -335,8 +406,12 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
                             throw failure
                         }
                     }
-                    if (event.shortCode.isNotEmpty()) mutableState.value = MessengerState(mutableState.value.revision + 1,
-                        true, pairings = MessageNative.pairings(store).toList(), shortCode = event.shortCode.toString(Charsets.US_ASCII))
+                    // An answered one-time code is spent, so it leaves the screen for the digits to compare.
+                    if (event.shortCode.isNotEmpty()) {
+                        clearCode()
+                        mutableState.value = MessengerState(mutableState.value.revision + 1,
+                            true, pairings = MessageNative.pairings(store).toList(), shortCode = event.shortCode.toString(Charsets.US_ASCII))
+                    }
                 }
                 connection.taken(received.id)
             } catch (failure: CallFailure) {
@@ -361,12 +436,16 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
         connection.deposit(item.target, item.bytes)
     }
     private fun closeConversations() { conversations.values.forEach(MessageConversation::close); conversations.clear() }
-    private fun publish(clearCode: Boolean = false, failure: MessengerFailure = mutableState.value.failure) {
+    /** Wipes the code bytes on screen. The caller publishes the state without them. */
+    private fun clearCode() { mutableState.value.code?.fill(0); displayed?.fill(0); displayed = null }
+    private fun publish(clearCode: Boolean = false, failure: MessengerFailure = mutableState.value.failure,
+                        stopped: Boolean = mutableState.value.stopped) {
         val current = mutableState.value
         val pairings = if (book.state.value is BookState.Ready) book.withStore { MessageNative.pairings(it).toList() } else emptyList()
         // Digits to compare mean nothing once no pairing is pending, so they leave with the last one.
         mutableState.value = MessengerState(current.revision + 1, client != null, failure, pairings,
-            if (clearCode) null else current.code, if (pairings.isEmpty()) "" else current.shortCode, current.link)
+            if (clearCode) null else current.code, if (pairings.isEmpty()) "" else current.shortCode, current.link,
+            stopped && client == null)
         book.open()
     }
     private fun failed(failure: Exception) {
@@ -388,11 +467,19 @@ class Messenger(private val book: CallBook, val history: ChatRepository,
         }
         if (failure is CallFailure && failure.code == CallNative.STORAGE_AMBIGUOUS) book.publicationAmbiguous()
         val old = mutableState.value
-        mutableState.value = MessengerState(old.revision + 1, client != null, reason, old.pairings, old.code, old.shortCode, old.link)
+        mutableState.value = MessengerState(old.revision + 1, client != null, reason, old.pairings, old.code, old.shortCode, old.link,
+            old.stopped && client == null)
     }
-    private fun <T> operation(action: () -> T): T = access.withLock {
+    /** A person's operation. One that [changes] pairings or contacts makes the worker reconcile inboxes after it. */
+    private fun <T> operation(changes: Boolean = true, action: () -> T): T = access.withLock {
         try { requireAccess(); action() }
         catch (failure: Exception) { failed(failure); throw failure }
+        finally { if (changes) reconcileDue = true }
     }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
+
+    private companion object {
+        /** A safety net for inbox changes no operation announced, such as an expired pairing. */
+        const val RECONCILE_INTERVAL_NANOS = 60_000_000_000L
+    }
 }

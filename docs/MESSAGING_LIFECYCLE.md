@@ -32,7 +32,7 @@ This permission neither grants app-key access nor starts microphone capture.
 ## Reachability
 
 "Get messages and calls while Ito is closed" is off by default. Enabling it
-from the visible app starts a nonsticky foreground service with a permanent
+from the visible app starts a sticky foreground service with a permanent
 notification. On Android 14 and later it declares `specialUse`: a user-enabled
 persistent encrypted mailbox connection without push. It does not capture
 audio. Microphone access belongs to the separate call service, which starts
@@ -40,12 +40,33 @@ with a call the person makes or answers.
 Android notification permission and enabled notification channels are required
 to enable background reachability. Refusal leaves the setting off.
 
+Enabling it also asks Android, in the system's own dialog, to stop restricting
+Ito's battery use. Ito has no push service to wake it, so a restricted phone may
+delay its keep-alive or refuse to restart it. While the restriction remains,
+Settings shows a row that asks again. Declining keeps the setting on.
+
 The service retains the selected transport and network policy and allows its
-bounded reconnection. Disconnect pauses automatic attempts until Connect or
-process restart. Turning reachability off stops ordinary background work.
-Process death, force-stop, reboot, Doze and vendor battery policy can interrupt
-reachability. There is no boot receiver, automatic exemption or push fallback.
-The setting resumes a service only when the person opens Ito again.
+bounded reconnection. A network that appears or passes validation ends the
+wait between automatic attempts. Disconnect pauses automatic attempts until
+Connect or process restart, and the service is then not restarted. Turning
+reachability off stops ordinary background work.
+
+The service comes back by itself. Android restarts it after it kills the
+process, and a receiver starts it after the phone boots and after Ito is
+updated. Each start checks the setting, notification access and app access
+before connecting. With app lock on, the connection's settings stay sealed
+until the person unlocks Ito, so after a reboot Ito posts a notice to unlock
+instead. If Android refuses a restart, Ito posts a notice to open it. Neither
+notice names a contact. Force-stop, vendor battery policy and a restriction
+the person keeps can still interrupt reachability.
+
+A sleeping phone stops its timers. While the service runs, an inexact
+allow-while-idle alarm wakes the phone at the mailbox PING interval, four
+minutes. Each wake asks the mailbox stream for one PING and keeps the CPU
+awake until its PONG, or at most ten seconds when the connection must
+recover. The mailbox client times its PING with a clock that counts sleep, so
+the first turn after any wake sends one that is overdue. No message is
+polled: the relay pushes each item on the open stream.
 
 ## Lock and notification privacy
 
@@ -75,8 +96,9 @@ removes previously visible message text, missed-call names and caller labels. No
 message body, identity key or contact ID is placed in a PendingIntent. Incoming
 screen and decline intents carry only an opaque, process-local action token.
 
-Phone battery, Doze, physical audio, ARM64 runtime and signed/minified release
-checks are separate qualification gates. Emulator checks do not close them.
+Phone battery and data use per hour, Doze and vendor battery policy, physical
+audio, ARM64 runtime and signed/minified release checks are separate
+qualification gates. Emulator checks do not close them.
 
 The public preferences snapshot is schema 3. Schemas 1 and 2 migrate with
 background reachability off and notification text on, preserving routing,
