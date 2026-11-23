@@ -30,8 +30,8 @@ Gradle supplies the absolute output root as `ITO_YUME_SHARED_ROOT` to
 `app/src/main/jni/Android.mk`. The root contains `include/yume/yume.h` and
 `<abi>/libyume.so`. ndk-build compiles Ito's adapter with C++20, hidden symbols
 and warnings as errors and packages `libitojni.so`, `libyume.so` and the NDK's
-`libc++_shared.so`. All Android/NDK builds run on the approved build host in
-an isolated task root.
+`libc++_shared.so`. The [build instructions](../README.md#build-and-validation)
+list the required tools and source checkouts.
 
 ## Handles, cancellation and network ownership
 

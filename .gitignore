@@ -20,3 +20,7 @@ local.properties
 *.pcapng
 __pycache__/
 *.py[cod]
+
+# Local workspace instructions
+.ai/
+/AGENTS.md

@@ -1,30 +1,35 @@
 # Ito
 
-Ito (糸, Japanese for “thread”) is an independent Android communication app
-built for private messages and audio calls. ITO is its wordmark,
-not an acronym. The source is AGPL-3.0-or-later. Service operators may charge
-for access or require authorization to use their infrastructure.
+Ito (糸, Japanese for “thread”) is an Android app for private messages and
+audio calls. ITO is the app’s wordmark. The source is licensed under
+[AGPL-3.0-or-later](LICENSE). Service operators set their own access rules and
+may charge for service.
 
 ## Current application
 
-Ito imports an operator’s sealed YUME configuration through Android’s document
-picker, keeps it encrypted with Android Keystore, and connects through public
-libyume without requiring a systemwide VPN. Select a configuration and network. While Ito is open, or the optional background service is running, it connects and retries
-transient connection loss through that selection. Disconnect pauses this
-automatic connection until Connect or process restart. The bounded stream and packet echo tests report payload counts and
-SHA-256 receipts. They require a server-authorized echo destination.
+Import a sealed YUME configuration with Android’s document picker or enroll
+through a provider, then choose a configuration and network. Ito encrypts the
+configuration at rest using Android Keystore and connects through libyume.
+While the app is open or its background service is running, it retries
+transient failures using the same selection. Disconnect pauses those attempts
+until you tap Connect or the process restarts.
+
+The built-in stream and packet echo tests require a destination authorized by
+the server. They report payload counts and SHA-256 receipts.
 
 Protected routing remains the default. Failed authentication, unavailable
 networks and refused destinations do not select another provider, manual
 configuration or direct route. Optional provider sign-in, entitled server
 selection and provisioning use the shared provider library.
 
-The [call core](https://github.com/FixCraft-Inc/ito/blob/main/call/README.md) holds a local communication identity
-and verified contacts, and carries an end-to-end authenticated test call
-through a [call relay](https://github.com/FixCraft-Inc/ito/blob/main/relay/README.md) over the selected YUME connection.
-The Linux `ito-call` endpoint runs the same core. The app's Chats tab pairs
-contacts, compares safety codes and exchanges ratcheted text through a shared
-mailbox relay. It shows delivery/read receipts, per-chat history, local deletion
+The [call core](https://github.com/FixCraft-Inc/ito/blob/main/call/README.md)
+handles local identities and verified contacts. It carries end-to-end
+authenticated calls over the selected YUME connection through a
+[call relay](https://github.com/FixCraft-Inc/ito/blob/main/relay/README.md).
+The Linux `ito-call` test endpoint uses the same core.
+
+Use Chats to pair contacts, compare safety codes and exchange ratcheted text
+through a shared mailbox. It shows delivery/read receipts, per-chat history, local deletion
 and the shared auto-delete timer. Contacts and the owner can have photos, kept
 encrypted on this phone and never sent. Existing identity-1 contacts must pair again.
 All QR codes use one scanner, with an explanation for legacy or unknown input.
@@ -36,11 +41,13 @@ screen can appear over the phone's lock screen when Android permits full-screen
 call alerts, with a ringing notification as fallback. Call and Answer start
 audio once the call connects. The [audio adapter](docs/VOICE.md) supplies mono
 Opus capture/playback, the choice of phone, speaker, headset or Bluetooth, and
-a foreground call service that keeps a minimized call running. Settings can keep the selected
-mailbox connection open while Ito is closed, with a permanent notification.
-It comes back after a reboot or an update and keeps the connection alive while
-the phone sleeps. This is off by default. App lock delays authentication of newly arrived rings
-until unlock. [Android messaging lifecycle](docs/MESSAGING_LIFECYCLE.md)
+a foreground service that keeps a minimized call running.
+
+By default, the mailbox background service is off. Enable it in Settings to
+keep the selected connection open with a persistent notification while Ito is
+closed. The service can resume after a reboot or update and attempts to maintain
+the connection while the phone sleeps. App lock delays authentication of
+newly arrived rings until you unlock Ito. [Android messaging lifecycle](docs/MESSAGING_LIFECYCLE.md)
 describes notification privacy, deadlines and interruption limits. Physical
 audio, battery/Doze and signed release qualification remain separate. Push is
 not implemented. The portable core's
@@ -58,10 +65,10 @@ Saving an address does not contact its server or grant transport authority.
 
 ## Ownership
 
-This repository, `ito4a`, is the Android app. The call core, the relay and the
-calling contracts live in [`ito`](https://github.com/FixCraft-Inc/ito), and this
-app consumes them as `yume4a` consumes YUME: a signed sibling checkout, with the
-exact commit recorded in each APK's notices.
+This repository, `ito4a`, contains the Android app. The call core, relay,
+mailbox and contracts live in [`ito`](https://github.com/FixCraft-Inc/ito).
+Build from a signed Ito core checkout. Each APK records the exact source
+commit in its notices.
 
 Ito is separate from `yume4a`, the general-purpose YUME VPN application.
 It embeds the YUME core through its public C ABI without requiring
@@ -86,15 +93,20 @@ records the maintained native selection and its host-only evaluation.
 
 ## Build and validation
 
-Use JDK 21, Android SDK platform 36.1, and the checked-in Gradle wrapper.
-The wrapper pins Gradle 9.3.1 and its distribution SHA-256. Dependencies are
-pinned in the version catalog. No release signing keys are included.
+Use JDK 21, Android SDK 36.1, NDK 28.2.13676358 and the checked-in Gradle
+wrapper. Set `VCPKG_ROOT` to your vcpkg checkout or put it at `../../vcpkg`.
+Clone [YUME](https://github.com/FixCraft-Inc/yume) and the
+[Ito core](https://github.com/FixCraft-Inc/ito) and import the signers' public
+keys into your GnuPG keyring. The wrapper verifies its Gradle 9.3.1 download
+against the pinned SHA-256. Dependency versions are in the Gradle version
+catalog.
 
 The default build supports manual/self-hosted use and excludes the provider
 client and its dependencies:
 
 ```sh
-./gradlew --no-daemon --max-workers=2 -PitoYumeRoot=/path/to/yume \
+./gradlew --no-daemon --max-workers=2 \
+  -PitoYumeRoot=/path/to/yume -PitoCoreRoot=/path/to/ito \
   :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
@@ -121,11 +133,10 @@ Provisioned configuration stays inside the app. Device-bound browser enrollment
 delivers and validates the sealed kit automatically after server selection.
 Anonymous providers and manual imports may still require an opening code.
 
-Builds require NDK 28.2.13676358 and a vcpkg checkout selected by VCPKG_ROOT.
-`-PitoYumeRoot` and `-PitoCoreRoot` name the YUME and Ito core checkouts, by
-default `../../yume` and `../../ito`. Dirty or unsigned native candidates require
--PitoUnverifiedSource=true for debug tests only. Release refuses that override. The build records native source/library hashes
-and packages verified dependency notices. See [notices](THIRD_PARTY_LICENSES.md).
+`-PitoYumeRoot` and `-PitoCoreRoot` default to `../../yume` and `../../ito`.
+Release builds require clean, signed native checkouts. For debug testing,
+`-PitoUnverifiedSource=true` permits dirty or unsigned native inputs. The
+build records native source and library hashes and packages dependency notices. See [notices](THIRD_PARTY_LICENSES.md).
 
 `./build.sh` builds the release APK and signs it with the key named in the
 ignored `.release-signing.env`, as [the example](.release-signing.env.example)
