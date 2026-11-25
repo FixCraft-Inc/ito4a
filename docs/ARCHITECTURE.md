@@ -2,8 +2,9 @@
 
 ## Application owners
 
-The Android app uses Kotlin, Jetpack Compose and Material 3, with one light-blue
-palette on every Android version and Material Symbols icons. Its screens read
+The Android app uses Kotlin, Jetpack Compose and Material 3, with one blue
+palette on every Android version (light or dark, following the system setting)
+and Material Symbols icons. Its screens read
 a lifecycle-aware ViewModel. Chats, profiles and calls open full screen above
 the Chats, Service and Settings tabs, and saved navigation holds only route
 names and public contact codes. Preferences are serialized into a single
