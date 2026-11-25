@@ -171,7 +171,5 @@ still stops that call.
 
 Only the enabled debug build trusts a user-installed qualification CA, and only for
 four exact loopback fixture hostnames. Release uses normal system trust.
-Private acceptance records bind sources, module contents, APKs, native
-libraries, signer, fresh fixtures and payload hashes. Physical-device,
-Wi-Fi/cellular handover, ARM64 runtime and signed-release readiness require
-separate evidence.
+Physical-device, Wi-Fi/cellular handover, ARM64 runtime and signed-release
+readiness require separate evidence.

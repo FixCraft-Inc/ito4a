@@ -129,7 +129,7 @@ the app leaves foreground. Invitation/pairing text stays transient and out of
 saved navigation. Only shared pairing links offer Share. Camera, audio and
 background reachability require their own device evidence.
 
-## Planned composition
+## Composition
 
 ```text
 Android UI and lifecycle
@@ -177,7 +177,7 @@ of a provider's account name or directory response.
 
 The current Emergency setting is a preference only. Normal foreground audio
 uses fixed mono Opus at 48 kHz, 20 ms and a requested 24 kbit/s codec payload.
-Adaptive bandwidth, bitrate and packet duration remain the separate I6 work.
+Adaptive bandwidth, bitrate and packet duration are not implemented.
 Evaluate roughly 6–8 kbit/s of codec payload for its emergency setting. That
 number excludes transport/authentication headers, feedback, redundancy,
 handshakes and link overhead. Do not advertise it as whole-link usage.

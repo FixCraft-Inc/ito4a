@@ -30,7 +30,7 @@ Gradle supplies the absolute output root as `ITO_YUME_SHARED_ROOT` to
 `app/src/main/jni/Android.mk`. The root contains `include/yume/yume.h` and
 `<abi>/libyume.so`. ndk-build compiles Ito's adapter with C++20, hidden symbols
 and warnings as errors and packages `libitojni.so`, `libyume.so` and the NDK's
-`libc++_shared.so`. The [build instructions](../README.md#build-and-validation)
+`libc++_shared.so`. The [build instructions](../README.md#building)
 list the required tools and source checkouts.
 
 ## Handles, cancellation and network ownership
@@ -172,37 +172,8 @@ interface by name, so `app/proguard-rules.pro` keeps them in minified builds.
 Cancellation while `openCallStream` is blocked ends the waiting attempt. If
 the native open later succeeds, the run closes that stream without invoking
 the canceled lane. Dismissing the ended attempt must keep its view idle when
-that late stream arrives.
-
-`CallOpeningTest` exercises this schedule through real JNI and the public
-libyume ABI. It is an opt-in `RequiresI4bFixture` test, enabled with the
-instrumentation argument `i4bOpening=true` and the fixture exclusion cleared.
-The target app's `no_backup/opening-fixture/client/` holds a generated client
-configuration and its referenced files; `control.json` beside it names the
-host control port. The authenticated host server registers `ito-call` and
-withholds public stream acceptance. On each `accept` control line it accepts
-one stream, requires EOF with zero application bytes, and replies `eof`.
-The test sends `done` after its lane and application-owner cases. It observes
-the blocking native call before cancellation, then checks callback, call-view
-and adapter-handle outcomes. These handle counts do not measure all native or
-platform resources, and this fixture does not establish call creation or
-invitation-secret cleanup.
-
-`CallAuthorityTest` is a separate opt-in `RequiresI4bFixture` fixture, enabled
-with `i4bAuthority=true` and the fixture exclusion cleared. The target app's
-`no_backup/authority-fixture/client/` contains a generated authenticated client
-kit. A public-ABI host registers `ito-call`, answers RESERVE and JOIN, then
-holds the call at WAITING. The test seeds a synthetic local enrollment through
-the shared ProviderStore; it does not qualify network enrollment or OAuth.
-It uses the real ServiceController permit, ConnectionController, CallController,
-JNI and call core to exercise provider removal, joint wall/elapsed expiry,
-and selected Wi-Fi loss through the framework's actual `Network.onLost`.
-It checks typed connection/call termination, invitation withdrawal and zeroing,
-no manual fallback, and exact native-handle baselines after call dismissal.
-The application-owned call book remains open until process stop. These counts
-do not measure all descriptors, heap or platform resources, and a WAITING call
-does not establish peer authentication, MediaAuthorized or audio. The Wi-Fi
-case restores Wi-Fi and awaits the framework callback during cleanup.
+that late stream arrives. [Opt-in fixture tests](#opt-in-fixture-tests)
+covers the device tests for this schedule and for provider authority.
 
 ## Messenger sessions and mailbox
 
@@ -239,25 +210,10 @@ Explicit Stop also closes sessions opened while offline. This cleanup belongs
 to the process's connection owner and survives cancellation of an Activity waiter.
 
 `MessageBoundaryTest` exercises real JNI pairing, ratchets and storage
-ambiguity. `MessengerLiveTest` and `RingingLiveTest` are opt-in real-yumed
-journeys enabled by `m5aLive=true` and `m5bLive=true`, respectively, with
-private fixture kits staged under the target app's
-`no_backup/m5a-fixtures/{alice,bob}`. Ringing also needs a call relay behind
-the authenticated `ito-call` service. Default instrumentation excludes their
-`RequiresMessengerFixture` annotation. Synthetic UI galleries establish
-rendering only. Physical audio, camera, background and battery checks remain
-separate.
-
-For a disposable physical-device fixture, `m5bHostExport=true` additionally
-exports only the test's synthetic Bob identity and session under the target
-app's `no_backup/m5b-host/`, and enables background messaging after the journey.
-The private driver transfers that fixture to the Linux CLI, removes the export,
-and restarts the ordinary app to check incoming calls without instrumentation.
-These raw fixture snapshots are secrets and must stay outside Git and logs.
-The ringing journey also opens the isolated incoming activity through its
-notification, accepts a real invitation there and checks stale action tokens.
-Automatic full-screen display over a physical keyguard needs a separate phone
-pass with Android's full-screen alert permission recorded.
+ambiguity. The live messenger and ringing journeys are opt-in, as
+[opt-in fixture tests](#opt-in-fixture-tests) describes. Synthetic UI
+galleries show rendering only. Physical audio, camera, background and
+battery checks remain separate.
 
 Ringing uses `MessageNative.receiveRing`, a direct adapter to
 `ito_session_receive_ring`. WRONG_STATE returns no handle and leaves the item
@@ -267,3 +223,73 @@ consumed by responder creation. Invitation metadata and its public ID come
 from the core's existing C interface. Kotlin reads only the canonical public
 ID prefix of its own locally created invitation for outgoing correlation,
 matching the Linux endpoint. Peer admission and clocks remain native.
+
+## Opt-in fixture tests
+
+Some instrumentation tests need a host server and generated client files, so
+default runs leave them out. The call fixtures carry the
+`RequiresI4bFixture` annotation and the messenger journeys carry
+`RequiresMessengerFixture`. The `notAnnotation` runner argument in
+`app/build.gradle.kts` excludes both. To run one, clear that exclusion and
+pass the test's switch as an instrumentation argument. The annotation and
+switch names are fixed identifiers in the test code. Every fixture path below
+is inside the target app's `no_backup` directory.
+
+| Test | Switch | What it checks | Fixture |
+| --- | --- | --- | --- |
+| `CallOpeningTest` | `i4bOpening=true` | Canceling a call while its native stream is still opening | `opening-fixture/client/` and `control.json` |
+| `CallAuthorityTest`, provider builds only | `i4bAuthority=true` | Ending a waiting call on provider removal, permit expiry or loss of the selected Wi-Fi | `authority-fixture/client/` |
+| `MessengerLiveTest` | `m5aLive=true` | Pairing and messages through a real yumed and mailbox | `m5a-fixtures/{alice,bob}` |
+| `RingingLiveTest` | `m5bLive=true` | Ringing calls through the mailbox and a call relay | `m5a-fixtures/{alice,bob}` |
+| `RingingLiveTest` | `m5bHostExport=true`, with `m5bLive=true` | Exports Bob's identity and session for a check from another device | Writes `m5b-host/` |
+
+### Opening a call stream
+
+`CallOpeningTest` exercises the cancellation schedule in
+[call core](#call-core) through real JNI and the public libyume ABI.
+`opening-fixture/client/` holds a generated client configuration and its
+referenced files, and `control.json` beside it names the host control port.
+The authenticated host server registers `ito-call` and withholds public
+stream acceptance. On each `accept` control line it accepts one stream,
+requires EOF with zero application bytes, and replies `eof`. The test sends
+`done` after its lane and application-owner cases. It observes the blocking
+native call before cancellation, then checks callback, call-view and
+adapter-handle outcomes. These handle counts do not measure all native or
+platform resources, and this fixture does not cover call creation or
+invitation-secret cleanup.
+
+### Provider authority
+
+`authority-fixture/client/` for `CallAuthorityTest` contains a generated
+authenticated client kit. A public-ABI host registers `ito-call`, answers
+RESERVE and JOIN, then holds the call at WAITING. The test seeds a synthetic
+local enrollment through the shared ProviderStore. It does not qualify network
+enrollment or OAuth. It uses the real ServiceController permit,
+ConnectionController, CallController, JNI and call core to exercise provider
+removal, joint wall/elapsed expiry, and selected Wi-Fi loss through the
+framework's actual `Network.onLost`. It checks typed connection/call
+termination, invitation withdrawal and zeroing, no manual fallback, and exact
+native-handle baselines after call dismissal. The application-owned call book
+remains open until process stop. These counts do not measure all descriptors,
+heap or platform resources, and a WAITING call does not prove peer
+authentication, MediaAuthorized or audio. The Wi-Fi case restores Wi-Fi and
+awaits the framework callback during cleanup.
+
+### Messenger and ringing journeys
+
+`MessengerLiveTest` and `RingingLiveTest` run through a real yumed with
+generated client kits for Alice and Bob under `m5a-fixtures/`. Ringing also
+needs a call relay behind the authenticated `ito-call` service. The ringing
+journey also opens the isolated incoming activity through its notification,
+accepts a real invitation there and checks stale action tokens. Automatic
+full-screen display over a physical keyguard needs a separate phone pass with
+Android's full-screen alert permission recorded.
+
+`m5bHostExport=true` prepares a disposable physical-device fixture. After
+the journey it exports only the test's synthetic Bob identity and session
+under `m5b-host/` and turns on background messaging. The live cross-device
+check that uses this export needs a host-side driver that is not in this
+repository. That driver moves the export to the Linux `ito-call` endpoint,
+removes it from the phone, and restarts the ordinary app to check incoming
+calls without instrumentation. These raw fixture snapshots are secrets and
+must stay outside Git and logs.

@@ -58,8 +58,8 @@ the first packet's unknown delay in TCP, TLS, the relay or Android audio buffers
 Later sample deadlines discard speech delayed relative to that initial anchor.
 There is no loss concealment or unreliable carrier claim. YTP ordering and
 authentication remain unchanged. Economy/Emergency remain stored preferences
-that Settings does not offer, pending the separate I6 adaptation and
-total-wire/intelligibility tests. Settings states the fixed audio quality.
+that Settings does not offer until adaptive audio and its
+total-wire/intelligibility tests exist. Settings states the fixed audio quality.
 
 A call keeps running when the Activity leaves the screen, from its first
 phase, because its foreground service starts with it. The call screen can also
